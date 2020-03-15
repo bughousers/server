@@ -17,8 +17,8 @@ use std::error::Error;
 
 use hyper::{Body, Request, Response};
 
-type DispatchError = Box<dyn Error + Send + Sync>;
-type DispatchResult = Result<Response<Body>, DispatchError>;
+pub type DispatchError = Box<dyn Error + Send + Sync>;
+pub type DispatchResult = Result<Response<Body>, DispatchError>;
 
 pub async fn dispatch(req: Request<Body>) -> DispatchResult {
     Ok(Response::new("dispatch()".into()))
