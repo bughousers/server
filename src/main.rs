@@ -15,8 +15,6 @@
 
 mod dispatcher;
 
-use std::error::Error;
-
 use hyper::service::{make_service_fn, service_fn};
 use hyper::Server;
 
@@ -26,8 +24,7 @@ const LISTEN_ADDR: &'static str = "0.0.0.0:8080";
 
 #[tokio::main]
 async fn main() -> Result<(), DispatchError> {
-    let make_svc =
-        make_service_fn(|_| async { Ok::<_, Box<dyn Error + Send + Sync>>(service_fn(dispatch)) });
+    let make_svc = make_service_fn(|_| async { Ok::<_, DispatchError>(service_fn(dispatch)) });
     Server::bind(&LISTEN_ADDR.parse()?).serve(make_svc).await?;
     Ok(())
 }
