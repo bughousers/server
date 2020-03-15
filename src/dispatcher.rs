@@ -15,11 +15,22 @@
 
 use std::error::Error;
 
-use hyper::{Body, Request, Response};
+use hyper::{Body, Method, Request, Response};
+use serde::{Deserialize, Serialize};
 
 pub type DispatchError = Box<dyn Error + Send + Sync>;
 pub type DispatchResult = Result<Response<Body>, DispatchError>;
 
 pub async fn dispatch(req: Request<Body>) -> DispatchResult {
-    Ok(Response::new("dispatch()".into()))
+    match (req.method(), req.uri().path()) {
+        (&Method::POST, "/create") => dispatch_create(req).await,
+        _ => Ok(Response::new("dispatch()".into())),
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct CreateResp {}
+
+async fn dispatch_create(req: Request<Body>) -> DispatchResult {
+    Ok(Response::new("dispatch_create()".into()))
 }
