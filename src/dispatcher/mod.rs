@@ -30,6 +30,7 @@ pub type DispatchResult = Result<Response<Body>, ServerError>;
 pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/events") => dispatch_events(req).await,
+        (&Method::POST, "/config") => dispatch_config(ch, req.into_body()).await,
         (&Method::POST, "/connect") => dispatch_connect(ch, req.into_body()).await,
         (&Method::POST, "/create") => dispatch_create(ch, req.into_body()).await,
         (&Method::POST, "/reconnect") => dispatch_reconnect(ch, req.into_body()).await,
@@ -46,6 +47,56 @@ struct Event {}
 
 async fn dispatch_events(req: Request<Body>) -> DispatchResult {
     Ok(Response::new("dispatch_events()".into()))
+}
+
+// Handle /config requests
+
+#[allow(non_snake_case)]
+#[derive(Clone, Deserialize, Serialize)]
+struct ConfigReq {
+    userId: String,
+    authToken: String,
+    data: ConfigReqData,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(tag = "type")]
+enum ConfigReqData {
+    Participants { participants: Vec<String> },
+    Start,
+}
+
+async fn dispatch_config(ch: Channel, body: Body) -> DispatchResult {
+    let data = body::to_bytes(body).await?;
+    if let Ok(req) = serde_json::from_slice::<ConfigReq>(&data) {
+        let (tx, mut rx) = channel::<MsgResp>(1);
+        let msg = match req.data {
+            ConfigReqData::Participants { participants } => Msg {
+                data: MsgData::ChangeParticipants(
+                    req.userId.into(),
+                    req.authToken.into(),
+                    participants.iter().map(|p| p.clone().into()).collect(),
+                ),
+                resp_channel: tx,
+            },
+            ConfigReqData::Start => Msg {
+                data: MsgData::Start(req.userId.into(), req.authToken.into()),
+                resp_channel: tx,
+            },
+        };
+        if let Err(_) = ch.send(msg) {
+            return internal_server_error();
+        }
+        match rx.recv().await {
+            Some(MsgResp::ChangedParticipants) => ok(),
+            Some(MsgResp::ChangeParticipantsFailure) => unauthorized(),
+            Some(MsgResp::Started) => ok(),
+            Some(MsgResp::StartFailure) => unauthorized(),
+            _ => internal_server_error(),
+        }
+    } else {
+        bad_request()
+    }
 }
 
 // Handle /connect requests
@@ -212,6 +263,10 @@ fn builder() -> Builder {
 
 fn json_builder() -> Builder {
     builder().header("Content-Type", "application/json; charset=UTF-8")
+}
+
+fn ok() -> DispatchResult {
+    Ok(builder().status(200).body(Body::empty())?)
 }
 
 fn bad_request() -> DispatchResult {

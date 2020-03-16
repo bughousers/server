@@ -15,11 +15,13 @@
 
 use std::collections::HashMap;
 
-use crate::state::misc::UserId;
+use crate::state::UserId;
 
 pub struct Session {
     pub owner: UserId,
     pub user_names: HashMap<UserId, String>,
+    pub participants: Vec<UserId>,
+    pub started: bool,
 }
 
 impl Session {
@@ -27,6 +29,8 @@ impl Session {
         Self {
             owner,
             user_names: HashMap::new(),
+            participants: Vec::with_capacity(4),
+            started: false,
         }
     }
 }
