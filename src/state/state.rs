@@ -60,15 +60,22 @@ pub struct Msg {
 
 pub enum MsgData {
     Create(String),
+    Reconnect(SessionId, UserId, AuthToken),
 }
 
 pub enum MsgResp {
     Created(SessionId, UserId, AuthToken),
+    Reconnected(String),
+    ReconnectAuthFailure,
+    ReconnectFailure,
 }
 
 async fn handle(state: &mut State, msg: Msg) {
     match msg.data {
-        MsgData::Create(user_name) => handle_create(state, msg.resp_channel, user_name).await,
+        MsgData::Create(n) => handle_create(state, msg.resp_channel, n).await,
+        MsgData::Reconnect(sid, uid, tok) => {
+            handle_reconnect(state, msg.resp_channel, sid, uid, tok).await
+        }
     }
 }
 
@@ -87,4 +94,36 @@ async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String
         .insert(user_id.clone(), auth_token.clone());
     ch.send(MsgResp::Created(session_id, user_id, auth_token))
         .await;
+}
+
+async fn handle_reconnect(
+    state: &mut State,
+    mut ch: RespChannel,
+    session_id: SessionId,
+    user_id: UserId,
+    auth_token: AuthToken,
+) {
+    let msg_resp = {
+        let sid = state.session_ids.get(&user_id);
+        let tok = state.auth_tokens.get(&user_id);
+        if let (Some(sid), Some(tok)) = (sid, tok) {
+            if *sid == session_id && *tok == auth_token {
+                MsgResp::Reconnected(
+                    state
+                        .sessions
+                        .get(&session_id)
+                        .unwrap()
+                        .user_names
+                        .get(&user_id)
+                        .unwrap()
+                        .into(),
+                )
+            } else {
+                MsgResp::ReconnectAuthFailure
+            }
+        } else {
+            MsgResp::ReconnectFailure
+        }
+    };
+    ch.send(msg_resp).await;
 }

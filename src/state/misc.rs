@@ -45,6 +45,12 @@ impl PartialEq for SessionId {
     }
 }
 
+impl From<String> for SessionId {
+    fn from(string: String) -> Self {
+        Self { data: string }
+    }
+}
+
 impl Into<String> for SessionId {
     fn into(self) -> String {
         self.data
@@ -70,6 +76,12 @@ impl PartialEq for UserId {
     }
 }
 
+impl From<String> for UserId {
+    fn from(string: String) -> Self {
+        Self { data: string }
+    }
+}
+
 impl Into<String> for UserId {
     fn into(self) -> String {
         self.data
@@ -92,6 +104,12 @@ impl AuthToken {
 impl PartialEq for AuthToken {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
+    }
+}
+
+impl From<String> for AuthToken {
+    fn from(string: String) -> Self {
+        Self { data: string }
     }
 }
 

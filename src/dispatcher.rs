@@ -31,7 +31,7 @@ pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
         (&Method::GET, "/events") => dispatch_events(req).await,
         (&Method::POST, "/connect") => dispatch_connect(req).await,
         (&Method::POST, "/create") => dispatch_create(ch, req.into_body()).await,
-        (&Method::POST, "/reconnect") => dispatch_reconnect(req).await,
+        (&Method::POST, "/reconnect") => dispatch_reconnect(ch, req.into_body()).await,
         (&Method::POST, "/update") => dispatch_update(req).await,
         _ => not_found(),
     }
@@ -113,14 +113,43 @@ async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
 
 #[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
-struct ReconnectReq {}
+struct ReconnectReq {
+    sessionId: String,
+    userId: String,
+    authToken: String,
+}
 
 #[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
-struct ReconnectResp {}
+struct ReconnectResp {
+    userName: String,
+}
 
-async fn dispatch_reconnect(req: Request<Body>) -> DispatchResult {
-    Ok(Response::new("dispatch_reconnect()".into()))
+async fn dispatch_reconnect(ch: Channel, body: Body) -> DispatchResult {
+    let data = body::to_bytes(body).await?;
+    if let Ok(req) = serde_json::from_slice::<ReconnectReq>(&data) {
+        let (tx, mut rx) = channel::<MsgResp>(1);
+        let msg = Msg {
+            data: MsgData::Reconnect(
+                req.sessionId.into(),
+                req.userId.into(),
+                req.authToken.into(),
+            ),
+            resp_channel: tx,
+        };
+        if let Err(_) = ch.send(msg) {
+            return internal_server_error();
+        }
+        match rx.recv().await {
+            Some(MsgResp::Reconnected(n)) => Ok(json_builder()
+                .body(serde_json::to_string(&ReconnectResp { userName: n })?.into())?),
+            Some(MsgResp::ReconnectAuthFailure) => unauthorized(),
+            Some(MsgResp::ReconnectFailure) => not_found(),
+            _ => internal_server_error(),
+        }
+    } else {
+        bad_request()
+    }
 }
 
 // Handle /update requests
@@ -157,6 +186,10 @@ fn json_builder() -> Builder {
 
 fn bad_request() -> DispatchResult {
     Ok(builder().status(400).body(Body::empty())?)
+}
+
+fn unauthorized() -> DispatchResult {
+    Ok(builder().status(401).body(Body::empty())?)
 }
 
 fn not_found() -> DispatchResult {
