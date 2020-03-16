@@ -62,6 +62,7 @@ pub enum MsgData {
     ChangeParticipants(UserId, AuthToken, Vec<UserId>),
     Connect(SessionId, String),
     Create(String),
+    Move(UserId, AuthToken, String, String),
     Reconnect(UserId, AuthToken),
     Start(UserId, AuthToken),
 }
@@ -72,6 +73,8 @@ pub enum MsgResp {
     Connected(UserId, AuthToken),
     ConnectFailure,
     Created(SessionId, UserId, AuthToken),
+    Moved,
+    MoveFailure,
     Reconnected(SessionId, String),
     ReconnectFailure,
     Started,
@@ -85,6 +88,9 @@ async fn handle(state: &mut State, msg: Msg) -> Option<()> {
         }
         MsgData::Connect(sid, n) => handle_connect(state, msg.resp_channel, sid, n).await,
         MsgData::Create(n) => handle_create(state, msg.resp_channel, n).await,
+        MsgData::Move(uid, tok, old, new) => {
+            handle_move(state, msg.resp_channel, uid, tok, old, new).await
+        }
         MsgData::Reconnect(uid, tok) => handle_reconnect(state, msg.resp_channel, uid, tok).await,
         MsgData::Start(uid, tok) => handle_start(state, msg.resp_channel, uid, tok).await,
     }
@@ -160,6 +166,30 @@ async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String
         .insert(user_id.clone(), auth_token.clone());
     ch.send(MsgResp::Created(session_id, user_id, auth_token))
         .await;
+    Some(())
+}
+
+// Handle Move messages
+
+async fn handle_move(
+    state: &mut State,
+    mut ch: RespChannel,
+    user_id: UserId,
+    auth_token: AuthToken,
+    old_pos: String,
+    new_pos: String,
+) -> Option<()> {
+    let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
+        let session = state.sessions.get_mut(&sid)?;
+        if session.move_piece(old_pos, new_pos) {
+            MsgResp::Moved
+        } else {
+            MsgResp::MoveFailure
+        }
+    } else {
+        MsgResp::MoveFailure
+    };
+    ch.send(msg_resp).await;
     Some(())
 }
 

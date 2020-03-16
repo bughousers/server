@@ -33,8 +33,8 @@ pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
         (&Method::POST, "/config") => dispatch_config(ch, req.into_body()).await,
         (&Method::POST, "/connect") => dispatch_connect(ch, req.into_body()).await,
         (&Method::POST, "/create") => dispatch_create(ch, req.into_body()).await,
+        (&Method::POST, "/move") => dispatch_move(ch, req.into_body()).await,
         (&Method::POST, "/reconnect") => dispatch_reconnect(ch, req.into_body()).await,
-        (&Method::POST, "/update") => dispatch_update(req).await,
         _ => not_found(),
     }
 }
@@ -193,6 +193,45 @@ async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
     }
 }
 
+// Handle /move requests
+
+#[allow(non_snake_case)]
+#[derive(Clone, Deserialize, Serialize)]
+struct MoveReq {
+    userId: String,
+    authToken: String,
+    data: MoveReqData,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(tag = "type")]
+enum MoveReqData {
+    Move { oldPos: String, newPos: String },
+}
+
+async fn dispatch_move(ch: Channel, body: Body) -> DispatchResult {
+    let data = body::to_bytes(body).await?;
+    if let Ok(req) = serde_json::from_slice::<MoveReq>(&data) {
+        let (tx, mut rx) = channel::<MsgResp>(1);
+        let msg = match req.data {
+            MoveReqData::Move { oldPos, newPos } => Msg {
+                data: MsgData::Move(req.userId.into(), req.authToken.into(), oldPos, newPos),
+                resp_channel: tx,
+            },
+        };
+        if let Err(_) = ch.send(msg) {
+            return internal_server_error();
+        }
+        match rx.recv().await {
+            Some(MsgResp::Moved) => ok(),
+            Some(MsgResp::MoveFailure) => unauthorized(),
+            _ => internal_server_error(),
+        }
+    } else {
+        bad_request()
+    }
+}
+
 // Handle /reconnect requests
 
 #[allow(non_snake_case)]
@@ -234,20 +273,6 @@ async fn dispatch_reconnect(ch: Channel, body: Body) -> DispatchResult {
     } else {
         bad_request()
     }
-}
-
-// Handle /update requests
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct UpdateReq {}
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct UpdateResp {}
-
-async fn dispatch_update(req: Request<Body>) -> DispatchResult {
-    Ok(Response::new("dispatch_update()".into()))
 }
 
 // Helper functions

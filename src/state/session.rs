@@ -37,4 +37,8 @@ impl Session {
             logic: ChessLogic::new(),
         }
     }
+
+    pub fn move_piece(&mut self, old_pos: String, new_pos: String) -> bool {
+        false
+    }
 }
