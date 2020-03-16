@@ -13,8 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::error::Error;
-
 use hyper::body;
 use hyper::http::response::Builder;
 use hyper::{Body, Method, Request, Response};
@@ -22,9 +20,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::channel;
 
 use crate::state::state::{Channel, Msg, MsgData, MsgResp};
+use crate::ServerError;
 
-pub type DispatchError = Box<dyn Error + Send + Sync>;
-pub type DispatchResult = Result<Response<Body>, DispatchError>;
+pub type DispatchResult = Result<Response<Body>, ServerError>;
 
 pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
     match (req.method(), req.uri().path()) {
