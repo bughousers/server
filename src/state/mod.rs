@@ -18,7 +18,8 @@ pub mod session;
 pub mod state;
 
 pub type AuthToken = misc::AuthToken;
-pub type UserId = misc::UserId;
+pub type Channel = state::Channel;
 pub type Session = session::Session;
 pub type SessionId = misc::SessionId;
 pub type State = state::State;
+pub type UserId = misc::UserId;
