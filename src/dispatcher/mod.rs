@@ -41,7 +41,7 @@ pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
 // Handle /events requests
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Event {}
 
 async fn dispatch_events(req: Request<Body>) -> DispatchResult {
@@ -51,14 +51,14 @@ async fn dispatch_events(req: Request<Body>) -> DispatchResult {
 // Handle /connect requests
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct ConnectReq {
     sessionId: String,
     userName: String,
 }
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct ConnectResp {
     userId: String,
     authToken: String,
@@ -97,13 +97,13 @@ async fn dispatch_connect(ch: Channel, body: Body) -> DispatchResult {
 // Handle /create requests
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct CreateReq {
     userName: String,
 }
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct CreateResp {
     sessionId: String,
     userId: String,
@@ -145,14 +145,14 @@ async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
 // Handle /reconnect requests
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct ReconnectReq {
     userId: String,
     authToken: String,
 }
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct ReconnectResp {
     sessionId: String,
     userName: String,
@@ -188,11 +188,11 @@ async fn dispatch_reconnect(ch: Channel, body: Body) -> DispatchResult {
 // Handle /update requests
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct UpdateReq {}
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct UpdateResp {}
 
 async fn dispatch_update(req: Request<Body>) -> DispatchResult {
