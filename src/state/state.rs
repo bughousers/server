@@ -18,13 +18,13 @@ use std::collections::HashMap;
 use tokio::spawn;
 use tokio::sync::mpsc::*;
 
-use crate::state::misc::{AuthToken, PlayerId, SessionId};
+use crate::state::misc::{AuthToken, SessionId, UserId};
 use crate::state::session::Session;
 
 pub struct State {
     sessions: HashMap<SessionId, Session>,
-    session_ids: HashMap<PlayerId, SessionId>,
-    auth_tokens: HashMap<PlayerId, AuthToken>,
+    session_ids: HashMap<UserId, SessionId>,
+    auth_tokens: HashMap<UserId, AuthToken>,
 }
 
 impl State {
@@ -63,28 +63,28 @@ pub enum MsgData {
 }
 
 pub enum MsgResp {
-    Created(SessionId, PlayerId, AuthToken),
+    Created(SessionId, UserId, AuthToken),
 }
 
 async fn handle(state: &mut State, msg: Msg) {
     match msg.data {
-        MsgData::Create(player_name) => handle_create(state, msg.resp_channel, player_name).await,
+        MsgData::Create(user_name) => handle_create(state, msg.resp_channel, user_name).await,
     }
 }
 
-async fn handle_create(state: &mut State, mut ch: RespChannel, player_name: String) {
+async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String) {
     let session_id = SessionId::new();
-    let player_id = PlayerId::new();
+    let user_id = UserId::new();
     let auth_token = AuthToken::new();
-    let mut session = Session::new(player_id.clone());
-    session.player_names.insert(player_id.clone(), player_name);
+    let mut session = Session::new(user_id.clone());
+    session.user_names.insert(user_id.clone(), user_name);
     state.sessions.insert(session_id.clone(), session);
     state
         .session_ids
-        .insert(player_id.clone(), session_id.clone());
+        .insert(user_id.clone(), session_id.clone());
     state
         .auth_tokens
-        .insert(player_id.clone(), auth_token.clone());
-    ch.send(MsgResp::Created(session_id, player_id, auth_token))
+        .insert(user_id.clone(), auth_token.clone());
+    ch.send(MsgResp::Created(session_id, user_id, auth_token))
         .await;
 }

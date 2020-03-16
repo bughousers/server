@@ -52,11 +52,11 @@ impl Into<String> for SessionId {
 }
 
 #[derive(Clone, Eq, Hash)]
-pub struct PlayerId {
+pub struct UserId {
     data: String,
 }
 
-impl PlayerId {
+impl UserId {
     pub fn new() -> Self {
         Self {
             data: rand_alphanum_string(12),
@@ -64,13 +64,13 @@ impl PlayerId {
     }
 }
 
-impl PartialEq for PlayerId {
+impl PartialEq for UserId {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
     }
 }
 
-impl Into<String> for PlayerId {
+impl Into<String> for UserId {
     fn into(self) -> String {
         self.data
     }

@@ -62,35 +62,35 @@ async fn dispatch_connect(req: Request<Body>) -> DispatchResult {
 
 #[derive(Deserialize, Serialize)]
 struct CreateReq {
-    playerName: String,
+    userName: String,
 }
 
 #[derive(Deserialize, Serialize)]
 struct CreateResp {
     sessionId: String,
-    playerId: String,
+    userId: String,
     authToken: String,
 }
 
 async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
     let data = body::to_bytes(body).await?;
     if let Ok(req) = serde_json::from_slice::<CreateReq>(&data) {
-        if !validate_player_name(&req.playerName) {
+        if !validate_user_name(&req.userName) {
             return not_found(); // TODO: Use a better error code
         }
         let (tx, mut rx) = channel::<MsgResp>(1);
         let msg = Msg {
-            data: MsgData::Create(req.playerName),
+            data: MsgData::Create(req.userName),
             resp_channel: tx,
         };
         if let Err(_) = ch.send(msg) {
             return not_found(); // TODO: Use a better error code
         }
         let msg_resp = rx.recv().await;
-        if let Some(MsgResp::Created(sid, pid, tok)) = msg_resp {
+        if let Some(MsgResp::Created(sid, uid, tok)) = msg_resp {
             let json = serde_json::to_string(&CreateResp {
                 sessionId: sid.into(),
-                playerId: pid.into(),
+                userId: uid.into(),
                 authToken: tok.into(),
             });
             if let Ok(json) = json {
@@ -132,7 +132,7 @@ async fn dispatch_update(req: Request<Body>) -> DispatchResult {
 
 // Helper functions
 
-fn validate_player_name(name: &String) -> bool {
+fn validate_user_name(name: &String) -> bool {
     !name.is_empty()
         && name
             .chars()

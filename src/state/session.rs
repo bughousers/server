@@ -15,18 +15,18 @@
 
 use std::collections::HashMap;
 
-use crate::state::misc::PlayerId;
+use crate::state::misc::UserId;
 
 pub struct Session {
-    pub owner: PlayerId,
-    pub player_names: HashMap<PlayerId, String>,
+    pub owner: UserId,
+    pub user_names: HashMap<UserId, String>,
 }
 
 impl Session {
-    pub fn new(owner: PlayerId) -> Self {
+    pub fn new(owner: UserId) -> Self {
         Self {
             owner,
-            player_names: HashMap::new(),
+            user_names: HashMap::new(),
         }
     }
 }
