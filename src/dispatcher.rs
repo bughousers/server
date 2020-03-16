@@ -143,8 +143,7 @@ async fn dispatch_reconnect(ch: Channel, body: Body) -> DispatchResult {
         match rx.recv().await {
             Some(MsgResp::Reconnected(n)) => Ok(json_builder()
                 .body(serde_json::to_string(&ReconnectResp { userName: n })?.into())?),
-            Some(MsgResp::ReconnectAuthFailure) => unauthorized(),
-            Some(MsgResp::ReconnectFailure) => not_found(),
+            Some(MsgResp::ReconnectFailure) => unauthorized(),
             _ => internal_server_error(),
         }
     } else {

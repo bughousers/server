@@ -66,7 +66,6 @@ pub enum MsgData {
 pub enum MsgResp {
     Created(SessionId, UserId, AuthToken),
     Reconnected(String),
-    ReconnectAuthFailure,
     ReconnectFailure,
 }
 
@@ -119,7 +118,7 @@ async fn handle_reconnect(
                         .into(),
                 )
             } else {
-                MsgResp::ReconnectAuthFailure
+                MsgResp::ReconnectFailure
             }
         } else {
             MsgResp::ReconnectFailure
