@@ -27,7 +27,7 @@ pub type DispatchResult = Result<Response<Body>, ServerError>;
 pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/events") => dispatch_events(req).await,
-        (&Method::POST, "/connect") => dispatch_connect(req).await,
+        (&Method::POST, "/connect") => dispatch_connect(ch, req.into_body()).await,
         (&Method::POST, "/create") => dispatch_create(ch, req.into_body()).await,
         (&Method::POST, "/reconnect") => dispatch_reconnect(ch, req.into_body()).await,
         (&Method::POST, "/update") => dispatch_update(req).await,
@@ -49,14 +49,46 @@ async fn dispatch_events(req: Request<Body>) -> DispatchResult {
 
 #[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
-struct ConnectReq {}
+struct ConnectReq {
+    sessionId: String,
+    userName: String,
+}
 
 #[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
-struct ConnectResp {}
+struct ConnectResp {
+    userId: String,
+    authToken: String,
+}
 
-async fn dispatch_connect(req: Request<Body>) -> DispatchResult {
-    Ok(Response::new("dispatch_connect()".into()))
+async fn dispatch_connect(ch: Channel, body: Body) -> DispatchResult {
+    let data = body::to_bytes(body).await?;
+    if let Ok(req) = serde_json::from_slice::<ConnectReq>(&data) {
+        if !validate_user_name(&req.userName) {
+            return bad_request();
+        }
+        let (tx, mut rx) = channel::<MsgResp>(1);
+        let msg = Msg {
+            data: MsgData::Connect(req.sessionId.into(), req.userName),
+            resp_channel: tx,
+        };
+        if let Err(_) = ch.send(msg) {
+            return internal_server_error();
+        }
+        match rx.recv().await {
+            Some(MsgResp::Connected(uid, tok)) => Ok(json_builder().body(
+                serde_json::to_string(&ConnectResp {
+                    userId: uid.into(),
+                    authToken: tok.into(),
+                })?
+                .into(),
+            )?),
+            Some(MsgResp::ConnectFailure) => not_found(),
+            _ => internal_server_error(),
+        }
+    } else {
+        bad_request()
+    }
 }
 
 // Handle /create requests

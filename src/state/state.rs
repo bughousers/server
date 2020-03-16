@@ -59,11 +59,14 @@ pub struct Msg {
 }
 
 pub enum MsgData {
+    Connect(SessionId, String),
     Create(String),
     Reconnect(UserId, AuthToken),
 }
 
 pub enum MsgResp {
+    Connected(UserId, AuthToken),
+    ConnectFailure,
     Created(SessionId, UserId, AuthToken),
     Reconnected(SessionId, String),
     ReconnectFailure,
@@ -71,9 +74,34 @@ pub enum MsgResp {
 
 async fn handle(state: &mut State, msg: Msg) -> Option<()> {
     match msg.data {
+        MsgData::Connect(sid, n) => handle_connect(state, msg.resp_channel, sid, n).await,
         MsgData::Create(n) => handle_create(state, msg.resp_channel, n).await,
         MsgData::Reconnect(uid, tok) => handle_reconnect(state, msg.resp_channel, uid, tok).await,
     }
+}
+
+// Handle Connect messages
+
+async fn handle_connect(
+    state: &mut State,
+    mut ch: RespChannel,
+    session_id: SessionId,
+    user_name: String,
+) -> Option<()> {
+    let resp = if let Some(session) = state.sessions.get_mut(&session_id) {
+        let user_id = UserId::new();
+        let auth_token = AuthToken::new();
+        session.user_names.insert(user_id.clone(), user_name);
+        state.session_ids.insert(user_id.clone(), session_id);
+        state
+            .auth_tokens
+            .insert(user_id.clone(), auth_token.clone());
+        MsgResp::Connected(user_id, auth_token)
+    } else {
+        MsgResp::ConnectFailure
+    };
+    ch.send(resp).await;
+    Some(())
 }
 
 // Handle Create messages
