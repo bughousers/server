@@ -36,7 +36,7 @@ impl State {
         }
     }
 
-    pub async fn serve(mut self) -> Channel {
+    pub fn serve(mut self) -> Channel {
         let (tx, mut rx) = unbounded_channel::<Msg>();
         spawn(async move {
             loop {
@@ -45,9 +45,7 @@ impl State {
                     handle(&mut self, msg).await;
                 }
             }
-        })
-        .await
-        .unwrap();
+        });
         tx
     }
 }
