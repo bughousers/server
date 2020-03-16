@@ -112,7 +112,6 @@ async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
 #[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct ReconnectReq {
-    sessionId: String,
     userId: String,
     authToken: String,
 }
@@ -120,6 +119,7 @@ struct ReconnectReq {
 #[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct ReconnectResp {
+    sessionId: String,
     userName: String,
 }
 
@@ -128,19 +128,20 @@ async fn dispatch_reconnect(ch: Channel, body: Body) -> DispatchResult {
     if let Ok(req) = serde_json::from_slice::<ReconnectReq>(&data) {
         let (tx, mut rx) = channel::<MsgResp>(1);
         let msg = Msg {
-            data: MsgData::Reconnect(
-                req.sessionId.into(),
-                req.userId.into(),
-                req.authToken.into(),
-            ),
+            data: MsgData::Reconnect(req.userId.into(), req.authToken.into()),
             resp_channel: tx,
         };
         if let Err(_) = ch.send(msg) {
             return internal_server_error();
         }
         match rx.recv().await {
-            Some(MsgResp::Reconnected(n)) => Ok(json_builder()
-                .body(serde_json::to_string(&ReconnectResp { userName: n })?.into())?),
+            Some(MsgResp::Reconnected(sid, n)) => Ok(json_builder().body(
+                serde_json::to_string(&ReconnectResp {
+                    sessionId: sid.into(),
+                    userName: n,
+                })?
+                .into(),
+            )?),
             Some(MsgResp::ReconnectFailure) => unauthorized(),
             _ => internal_server_error(),
         }

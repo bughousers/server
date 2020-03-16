@@ -60,21 +60,19 @@ pub struct Msg {
 
 pub enum MsgData {
     Create(String),
-    Reconnect(SessionId, UserId, AuthToken),
+    Reconnect(UserId, AuthToken),
 }
 
 pub enum MsgResp {
     Created(SessionId, UserId, AuthToken),
-    Reconnected(String),
+    Reconnected(SessionId, String),
     ReconnectFailure,
 }
 
 async fn handle(state: &mut State, msg: Msg) -> Option<()> {
     match msg.data {
         MsgData::Create(n) => handle_create(state, msg.resp_channel, n).await,
-        MsgData::Reconnect(sid, uid, tok) => {
-            handle_reconnect(state, msg.resp_channel, sid, uid, tok).await
-        }
+        MsgData::Reconnect(uid, tok) => handle_reconnect(state, msg.resp_channel, uid, tok).await,
     }
 }
 
@@ -103,18 +101,13 @@ async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String
 async fn handle_reconnect(
     state: &mut State,
     mut ch: RespChannel,
-    session_id: SessionId,
     user_id: UserId,
     auth_token: AuthToken,
 ) -> Option<()> {
-    let msg_resp = if auth(state, &session_id, &user_id, &auth_token) {
+    let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
         MsgResp::Reconnected(
-            state
-                .sessions
-                .get(&session_id)?
-                .user_names
-                .get(&user_id)?
-                .into(),
+            sid.clone(),
+            state.sessions.get(sid)?.user_names.get(&user_id)?.into(),
         )
     } else {
         MsgResp::ReconnectFailure
@@ -125,12 +118,11 @@ async fn handle_reconnect(
 
 // Helper functions
 
-fn auth(state: &State, session_id: &SessionId, user_id: &UserId, auth_token: &AuthToken) -> bool {
-    let sid = state.session_ids.get(user_id);
-    let tok = state.auth_tokens.get(user_id);
-    if let (Some(sid), Some(tok)) = (sid, tok) {
-        sid == session_id && tok == auth_token
+fn auth<'a>(state: &'a State, user_id: &UserId, auth_token: &AuthToken) -> Option<&'a SessionId> {
+    let tok = state.auth_tokens.get(user_id)?;
+    if tok == auth_token {
+        state.session_ids.get(user_id)
     } else {
-        false
+        None
     }
 }
