@@ -69,7 +69,7 @@ pub enum MsgResp {
     ReconnectFailure,
 }
 
-async fn handle(state: &mut State, msg: Msg) {
+async fn handle(state: &mut State, msg: Msg) -> Option<()> {
     match msg.data {
         MsgData::Create(n) => handle_create(state, msg.resp_channel, n).await,
         MsgData::Reconnect(sid, uid, tok) => {
@@ -78,7 +78,9 @@ async fn handle(state: &mut State, msg: Msg) {
     }
 }
 
-async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String) {
+// Handle Create messages
+
+async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String) -> Option<()> {
     let session_id = SessionId::new();
     let user_id = UserId::new();
     let auth_token = AuthToken::new();
@@ -93,7 +95,10 @@ async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String
         .insert(user_id.clone(), auth_token.clone());
     ch.send(MsgResp::Created(session_id, user_id, auth_token))
         .await;
+    Some(())
 }
+
+// Handle Reconnect messages
 
 async fn handle_reconnect(
     state: &mut State,
@@ -101,28 +106,31 @@ async fn handle_reconnect(
     session_id: SessionId,
     user_id: UserId,
     auth_token: AuthToken,
-) {
-    let msg_resp = {
-        let sid = state.session_ids.get(&user_id);
-        let tok = state.auth_tokens.get(&user_id);
-        if let (Some(sid), Some(tok)) = (sid, tok) {
-            if *sid == session_id && *tok == auth_token {
-                MsgResp::Reconnected(
-                    state
-                        .sessions
-                        .get(&session_id)
-                        .unwrap()
-                        .user_names
-                        .get(&user_id)
-                        .unwrap()
-                        .into(),
-                )
-            } else {
-                MsgResp::ReconnectFailure
-            }
-        } else {
-            MsgResp::ReconnectFailure
-        }
+) -> Option<()> {
+    let msg_resp = if auth(state, &session_id, &user_id, &auth_token) {
+        MsgResp::Reconnected(
+            state
+                .sessions
+                .get(&session_id)?
+                .user_names
+                .get(&user_id)?
+                .into(),
+        )
+    } else {
+        MsgResp::ReconnectFailure
     };
     ch.send(msg_resp).await;
+    Some(())
+}
+
+// Helper functions
+
+fn auth(state: &State, session_id: &SessionId, user_id: &UserId, auth_token: &AuthToken) -> bool {
+    let sid = state.session_ids.get(user_id);
+    let tok = state.auth_tokens.get(user_id);
+    if let (Some(sid), Some(tok)) = (sid, tok) {
+        sid == session_id && tok == auth_token
+    } else {
+        false
+    }
 }
