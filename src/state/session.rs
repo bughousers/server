@@ -15,6 +15,8 @@
 
 use std::collections::HashMap;
 
+use bughouse_rs::logic::ChessLogic;
+
 use crate::state::UserId;
 
 pub struct Session {
@@ -22,6 +24,7 @@ pub struct Session {
     pub user_names: HashMap<UserId, String>,
     pub participants: Vec<UserId>,
     pub started: bool,
+    pub logic: ChessLogic,
 }
 
 impl Session {
@@ -31,6 +34,7 @@ impl Session {
             user_names: HashMap::new(),
             participants: Vec::with_capacity(4),
             started: false,
+            logic: ChessLogic::new(),
         }
     }
 }
