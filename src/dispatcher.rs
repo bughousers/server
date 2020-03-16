@@ -76,7 +76,7 @@ async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
     let data = body::to_bytes(body).await?;
     if let Ok(req) = serde_json::from_slice::<CreateReq>(&data) {
         if !validate_user_name(&req.userName) {
-            return not_found(); // TODO: Use a better error code
+            return bad_request();
         }
         let (tx, mut rx) = channel::<MsgResp>(1);
         let msg = Msg {
@@ -84,25 +84,23 @@ async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
             resp_channel: tx,
         };
         if let Err(_) = ch.send(msg) {
-            return not_found(); // TODO: Use a better error code
+            return internal_server_error();
         }
         let msg_resp = rx.recv().await;
         if let Some(MsgResp::Created(sid, uid, tok)) = msg_resp {
-            let json = serde_json::to_string(&CreateResp {
-                sessionId: sid.into(),
-                userId: uid.into(),
-                authToken: tok.into(),
-            });
-            if let Ok(json) = json {
-                Ok(json_builder().body(json.into())?)
-            } else {
-                not_found() // TODO: Use a better error code
-            }
+            Ok(json_builder().body(
+                serde_json::to_string(&CreateResp {
+                    sessionId: sid.into(),
+                    userId: uid.into(),
+                    authToken: tok.into(),
+                })?
+                .into(),
+            )?)
         } else {
-            not_found() // TODO: Use a better error code
+            internal_server_error()
         }
     } else {
-        not_found() // TODO: Use a better error code
+        bad_request()
     }
 }
 
@@ -148,6 +146,14 @@ fn json_builder() -> Builder {
     builder().header("Content-Type", "application/json; charset=UTF-8")
 }
 
+fn bad_request() -> DispatchResult {
+    Ok(builder().status(400).body(Body::empty())?)
+}
+
 fn not_found() -> DispatchResult {
     Ok(builder().status(404).body(Body::empty())?)
+}
+
+fn internal_server_error() -> DispatchResult {
+    Ok(builder().status(500).body(Body::empty())?)
 }
