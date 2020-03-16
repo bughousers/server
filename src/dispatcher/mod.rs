@@ -22,7 +22,7 @@ use hyper::{Body, Method, Request, Response};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::channel;
 
-use crate::state::state::{Channel, Msg, MsgData, MsgResp};
+use crate::state::{Channel, Msg, MsgData, MsgResp};
 use crate::ServerError;
 
 pub type DispatchResult = Result<Response<Body>, ServerError>;
