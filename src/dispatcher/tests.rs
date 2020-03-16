@@ -248,13 +248,6 @@ fn valid_connect_req(create_resp: CreateResp) -> Result<Request<Body>, ServerErr
         .body(Body::from(json))?)
 }
 
-async fn valid_connect_resp(tx: Channel) -> Result<ConnectResp, ServerError> {
-    let create_resp = valid_create_resp(tx.clone()).await?;
-    let resp = dispatch(tx, valid_connect_req(create_resp)?).await?;
-    let resp = body::to_bytes(resp.into_body()).await?;
-    Ok(serde_json::from_slice::<ConnectResp>(&resp)?)
-}
-
 fn valid_create_req() -> Result<Request<Body>, ServerError> {
     let json = serde_json::to_string(&CreateReq {
         userName: "Mario".into(),
