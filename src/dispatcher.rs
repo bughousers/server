@@ -15,6 +15,7 @@
 
 use std::error::Error;
 
+use hyper::body;
 use hyper::http::response::Builder;
 use hyper::{Body, Method, Request, Response};
 use serde::{Deserialize, Serialize};
@@ -29,7 +30,7 @@ pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/events") => dispatch_events(req).await,
         (&Method::POST, "/connect") => dispatch_connect(req).await,
-        (&Method::POST, "/create") => dispatch_create(ch).await,
+        (&Method::POST, "/create") => dispatch_create(ch, req.into_body()).await,
         (&Method::POST, "/reconnect") => dispatch_reconnect(req).await,
         (&Method::POST, "/update") => dispatch_update(req).await,
         _ => not_found(),
@@ -60,30 +61,43 @@ async fn dispatch_connect(req: Request<Body>) -> DispatchResult {
 // Handle /create requests
 
 #[derive(Deserialize, Serialize)]
+struct CreateReq {
+    playerName: String,
+}
+
+#[derive(Deserialize, Serialize)]
 struct CreateResp {
     sessionId: String,
     playerId: String,
     authToken: String,
 }
 
-async fn dispatch_create(ch: Channel) -> DispatchResult {
-    let (tx, mut rx) = channel::<MsgResp>(1);
-    let msg = Msg {
-        data: MsgData::Create,
-        resp_channel: tx,
-    };
-    if let Err(_) = ch.send(msg) {
-        return not_found(); // TODO: Use a better error code
-    }
-    let msg_resp = rx.recv().await;
-    if let Some(MsgResp::Created(sid, pid, tok)) = msg_resp {
-        let json = serde_json::to_string(&CreateResp {
-            sessionId: sid.into(),
-            playerId: pid.into(),
-            authToken: tok.into(),
-        });
-        if let Ok(json) = json {
-            Ok(json_builder().body(json.into())?)
+async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
+    let data = body::to_bytes(body).await?;
+    if let Ok(req) = serde_json::from_slice::<CreateReq>(&data) {
+        if !validate_player_name(&req.playerName) {
+            return not_found(); // TODO: Use a better error code
+        }
+        let (tx, mut rx) = channel::<MsgResp>(1);
+        let msg = Msg {
+            data: MsgData::Create(req.playerName),
+            resp_channel: tx,
+        };
+        if let Err(_) = ch.send(msg) {
+            return not_found(); // TODO: Use a better error code
+        }
+        let msg_resp = rx.recv().await;
+        if let Some(MsgResp::Created(sid, pid, tok)) = msg_resp {
+            let json = serde_json::to_string(&CreateResp {
+                sessionId: sid.into(),
+                playerId: pid.into(),
+                authToken: tok.into(),
+            });
+            if let Ok(json) = json {
+                Ok(json_builder().body(json.into())?)
+            } else {
+                not_found() // TODO: Use a better error code
+            }
         } else {
             not_found() // TODO: Use a better error code
         }
@@ -117,6 +131,13 @@ async fn dispatch_update(req: Request<Body>) -> DispatchResult {
 }
 
 // Helper functions
+
+fn validate_player_name(name: &String) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_whitespace() || c.is_ascii_punctuation())
+}
 
 // TODO: Don't set Access-Control-Allow-Origin to *
 fn builder() -> Builder {

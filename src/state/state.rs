@@ -59,7 +59,7 @@ pub struct Msg {
 }
 
 pub enum MsgData {
-    Create,
+    Create(String),
 }
 
 pub enum MsgResp {
@@ -68,15 +68,16 @@ pub enum MsgResp {
 
 async fn handle(state: &mut State, msg: Msg) {
     match msg.data {
-        MsgData::Create => handle_create(state, msg.resp_channel).await,
+        MsgData::Create(player_name) => handle_create(state, msg.resp_channel, player_name).await,
     }
 }
 
-async fn handle_create(state: &mut State, mut ch: RespChannel) {
+async fn handle_create(state: &mut State, mut ch: RespChannel, player_name: String) {
     let session_id = SessionId::new();
     let player_id = PlayerId::new();
     let auth_token = AuthToken::new();
-    let session = Session::new(player_id.clone());
+    let mut session = Session::new(player_id.clone());
+    session.player_names.insert(player_id.clone(), player_name);
     state.sessions.insert(session_id.clone(), session);
     state
         .session_ids
