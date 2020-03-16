@@ -202,10 +202,7 @@ async fn dispatch_update(req: Request<Body>) -> DispatchResult {
 // Helper functions
 
 fn validate_user_name(name: &String) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c.is_ascii_punctuation())
+    !name.is_empty() && name.chars().all(|c| c.is_alphabetic() || c.is_whitespace())
 }
 
 // TODO: Don't set Access-Control-Allow-Origin to *
