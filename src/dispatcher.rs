@@ -39,6 +39,7 @@ pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
 
 // Handle /events requests
 
+#[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct Event {}
 
@@ -48,9 +49,11 @@ async fn dispatch_events(req: Request<Body>) -> DispatchResult {
 
 // Handle /connect requests
 
+#[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct ConnectReq {}
 
+#[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct ConnectResp {}
 
@@ -60,11 +63,13 @@ async fn dispatch_connect(req: Request<Body>) -> DispatchResult {
 
 // Handle /create requests
 
+#[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct CreateReq {
     userName: String,
 }
 
+#[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct CreateResp {
     sessionId: String,
@@ -106,9 +111,11 @@ async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
 
 // Handle /reconnect requests
 
+#[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct ReconnectReq {}
 
+#[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct ReconnectResp {}
 
@@ -118,9 +125,11 @@ async fn dispatch_reconnect(req: Request<Body>) -> DispatchResult {
 
 // Handle /update requests
 
+#[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct UpdateReq {}
 
+#[allow(non_snake_case)]
 #[derive(Deserialize, Serialize)]
 struct UpdateResp {}
 
