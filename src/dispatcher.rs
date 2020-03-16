@@ -136,7 +136,7 @@ fn validate_player_name(name: &String) -> bool {
     !name.is_empty()
         && name
             .chars()
-            .all(|c| c.is_whitespace() || c.is_ascii_punctuation())
+            .all(|c| c.is_alphanumeric() || c.is_ascii_punctuation())
 }
 
 // TODO: Don't set Access-Control-Allow-Origin to *
