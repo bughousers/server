@@ -18,15 +18,18 @@ use std::error::Error;
 use hyper::http::response::Builder;
 use hyper::{Body, Method, Request, Response};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::channel;
+
+use crate::state::state::{Channel, Msg, MsgData, MsgResp};
 
 pub type DispatchError = Box<dyn Error + Send + Sync>;
 pub type DispatchResult = Result<Response<Body>, DispatchError>;
 
-pub async fn dispatch(req: Request<Body>) -> DispatchResult {
+pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/events") => dispatch_events(req).await,
         (&Method::POST, "/connect") => dispatch_connect(req).await,
-        (&Method::POST, "/create") => dispatch_create(req).await,
+        (&Method::POST, "/create") => dispatch_create(ch).await,
         (&Method::POST, "/reconnect") => dispatch_reconnect(req).await,
         (&Method::POST, "/update") => dispatch_update(req).await,
         _ => not_found(),
@@ -57,10 +60,36 @@ async fn dispatch_connect(req: Request<Body>) -> DispatchResult {
 // Handle /create requests
 
 #[derive(Deserialize, Serialize)]
-struct CreateResp {}
+struct CreateResp {
+    sessionId: String,
+    playerId: String,
+    authToken: String,
+}
 
-async fn dispatch_create(req: Request<Body>) -> DispatchResult {
-    Ok(Response::new("dispatch_create()".into()))
+async fn dispatch_create(ch: Channel) -> DispatchResult {
+    let (tx, mut rx) = channel::<MsgResp>(1);
+    let msg = Msg {
+        data: MsgData::Create,
+        resp_channel: tx,
+    };
+    if let Err(_) = ch.send(msg) {
+        return not_found(); // TODO: Use a better error code
+    }
+    let msg_resp = rx.recv().await;
+    if let Some(MsgResp::Created(sid, pid, tok)) = msg_resp {
+        let json = serde_json::to_string(&CreateResp {
+            sessionId: sid.into(),
+            playerId: pid.into(),
+            authToken: tok.into(),
+        });
+        if let Ok(json) = json {
+            Ok(json_builder().body(json.into())?)
+        } else {
+            not_found() // TODO: Use a better error code
+        }
+    } else {
+        not_found() // TODO: Use a better error code
+    }
 }
 
 // Handle /reconnect requests
@@ -92,6 +121,10 @@ async fn dispatch_update(req: Request<Body>) -> DispatchResult {
 // TODO: Don't set Access-Control-Allow-Origin to *
 fn builder() -> Builder {
     Response::builder().header("Access-Control-Allow-Origin", "*")
+}
+
+fn json_builder() -> Builder {
+    builder().header("Content-Type", "application/json; charset=UTF-8")
 }
 
 fn not_found() -> DispatchResult {
