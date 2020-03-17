@@ -15,7 +15,7 @@ checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 [[package]]
 name = "bughouse-rs"
 version = "0.1.0"
-source = "git+https://github.com/bughousers/bughouse-rs.git#77b04d3b95c3ffb057727476206e8e29acb6bd3f"
+source = "git+https://github.com/bughousers/bughouse-rs.git#3453e9d381e8ee6354fe962e32fedd3a239d9185"
 
 [[package]]
 name = "bughouse-server"
