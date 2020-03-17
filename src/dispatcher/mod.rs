@@ -55,7 +55,9 @@ async fn dispatch_events(mut ch: Channel, req: Request<Body>) -> DispatchResult 
         if let Some(&session_id) = queries.get("session_id") {
             let resp = msg(&mut ch, MsgData::Subscribe(session_id.to_owned().into())).await;
             match resp {
-                Some(MsgResp::Subscribed(rx)) => Ok(builder().body(Body::wrap_stream(rx))?),
+                Some(MsgResp::Subscribed(rx)) => {
+                    Ok(event_stream_builder().body(Body::wrap_stream(rx))?)
+                }
                 _ => internal_server_error(),
             }
         } else {
@@ -229,6 +231,12 @@ fn validate_user_name(name: &String) -> bool {
 // TODO: Don't set Access-Control-Allow-Origin to *
 fn builder() -> Builder {
     Response::builder().header("Access-Control-Allow-Origin", "*")
+}
+
+fn event_stream_builder() -> Builder {
+    builder()
+        .header("Connection", "keep-alive")
+        .header("Content-Type", "text/event-stream")
 }
 
 fn json_builder() -> Builder {
