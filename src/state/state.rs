@@ -62,7 +62,7 @@ pub enum MsgData {
     ChangeParticipants(UserId, AuthToken, Vec<UserId>),
     Connect(SessionId, String),
     Create(String),
-    Move(UserId, AuthToken, String, String),
+    Move(UserId, AuthToken, String),
     Reconnect(UserId, AuthToken),
     Start(UserId, AuthToken),
 }
@@ -88,9 +88,7 @@ async fn handle(state: &mut State, msg: Msg) -> Option<()> {
         }
         MsgData::Connect(sid, n) => handle_connect(state, msg.resp_channel, sid, n).await,
         MsgData::Create(n) => handle_create(state, msg.resp_channel, n).await,
-        MsgData::Move(uid, tok, old, new) => {
-            handle_move(state, msg.resp_channel, uid, tok, old, new).await
-        }
+        MsgData::Move(uid, tok, c) => handle_move(state, msg.resp_channel, uid, tok, c).await,
         MsgData::Reconnect(uid, tok) => handle_reconnect(state, msg.resp_channel, uid, tok).await,
         MsgData::Start(uid, tok) => handle_start(state, msg.resp_channel, uid, tok).await,
     }
@@ -170,12 +168,11 @@ async fn handle_move(
     mut ch: RespChannel,
     user_id: UserId,
     auth_token: AuthToken,
-    old_pos: String,
-    new_pos: String,
+    change: String,
 ) -> Option<()> {
     let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
         let session = state.sessions.get_mut(&sid)?;
-        if session.move_piece(old_pos, new_pos) {
+        if session.move_piece(&user_id, change) {
             MsgResp::Moved
         } else {
             MsgResp::MoveFailure

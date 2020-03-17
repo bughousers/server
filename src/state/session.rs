@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 
 use bughouse_rs::logic::ChessLogic;
+use bughouse_rs::parse::parser::parse;
 
 use crate::state::UserId;
 
@@ -23,6 +24,7 @@ pub struct Session {
     owner: UserId,
     user_names: HashMap<UserId, String>,
     participants: Vec<UserId>,
+    active_participants: HashMap<UserId, (bool, bool)>,
     started: bool,
     logic: ChessLogic,
 }
@@ -33,6 +35,7 @@ impl Session {
             owner,
             user_names: HashMap::new(),
             participants: Vec::with_capacity(4),
+            active_participants: HashMap::with_capacity(4),
             started: false,
             logic: ChessLogic::new(),
         }
@@ -66,7 +69,20 @@ impl Session {
         self.started
     }
 
-    pub fn move_piece(&mut self, old_pos: String, new_pos: String) -> bool {
-        false
+    pub fn move_piece(&mut self, user_id: &UserId, change: String) -> bool {
+        if let Some((b1, w)) = &self.active_participants.get(user_id) {
+            let turn = if *b1 {
+                self.logic.white_active_1
+            } else {
+                self.logic.white_active_2
+            };
+            if turn != *w {
+                return false;
+            }
+            let [i, j, i_new, j_new] = parse(&change);
+            self.logic.movemaker(*b1, i, j, i_new, j_new)
+        } else {
+            false
+        }
     }
 }

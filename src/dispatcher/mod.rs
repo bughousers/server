@@ -206,7 +206,7 @@ struct MoveReq {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 enum MoveReqData {
-    Move { oldPos: String, newPos: String },
+    Move(String),
 }
 
 async fn dispatch_move(ch: Channel, body: Body) -> DispatchResult {
@@ -214,8 +214,8 @@ async fn dispatch_move(ch: Channel, body: Body) -> DispatchResult {
     if let Ok(req) = serde_json::from_slice::<MoveReq>(&data) {
         let (tx, mut rx) = channel::<MsgResp>(1);
         let msg = match req.data {
-            MoveReqData::Move { oldPos, newPos } => Msg {
-                data: MsgData::Move(req.userId.into(), req.authToken.into(), oldPos, newPos),
+            MoveReqData::Move(c) => Msg {
+                data: MsgData::Move(req.userId.into(), req.authToken.into(), c),
                 resp_channel: tx,
             },
         };
