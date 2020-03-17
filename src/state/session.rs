@@ -148,10 +148,10 @@ fn parse_piece(s: &String) -> Option<Piece> {
 
 fn parse_pos(s: &String) -> Option<(usize, usize)> {
     let mut buf = s.bytes();
-    let col = buf.next()? as usize - 97;
-    let row = buf.next()? as usize - 48;
-    if col < 8 && row < 8 {
-        Some((col, row))
+    let col = buf.next()? as usize;
+    let row = buf.next()? as usize;
+    if col >= 97 && col <= 104 && row >= 48 && row <= 55 {
+        Some((col - 97, row - 48))
     } else {
         None
     }
