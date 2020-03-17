@@ -38,6 +38,7 @@ pub enum ConfigReq {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum MoveReq {
+    Deploy { piece: String, pos: String },
     Move { change: String },
 }
 

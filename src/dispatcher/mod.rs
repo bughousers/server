@@ -155,6 +155,7 @@ async fn dispatch_move(
     req: MoveReq,
 ) -> DispatchResult {
     let data = match req {
+        MoveReq::Deploy { piece, pos } => MsgData::Deploy(session_id, user_id.into(), piece, pos),
         MoveReq::Move { change } => MsgData::Move(session_id, user_id.into(), change),
     };
     let resp = msg(&mut ch, data).await;

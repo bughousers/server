@@ -63,6 +63,7 @@ pub enum MsgData {
     ChangeParticipants(SessionId, UserId, Vec<UserId>),
     Connect(SessionId, String),
     Create(String),
+    Deploy(SessionId, UserId, String, String),
     Move(SessionId, UserId, String),
     Reconnect(SessionId, UserId),
     Start(SessionId, UserId),
@@ -76,6 +77,8 @@ pub enum MsgResp {
     Connected(UserId, AuthToken),
     ConnectFailure,
     Created(SessionId, UserId, AuthToken),
+    Deployed,
+    DeployFailure,
     Moved,
     MoveFailure,
     Reconnected(SessionId, String),
@@ -94,6 +97,9 @@ async fn handle(state: &mut State, msg: Msg) -> Option<()> {
         }
         MsgData::Connect(sid, n) => handle_connect(state, msg.resp_channel, sid, n).await,
         MsgData::Create(n) => handle_create(state, msg.resp_channel, n).await,
+        MsgData::Deploy(sid, uid, p, pos) => {
+            handle_deploy(state, msg.resp_channel, sid, uid, p, pos).await
+        }
         MsgData::Move(sid, uid, c) => handle_move(state, msg.resp_channel, sid, uid, c).await,
         MsgData::Reconnect(sid, uid) => handle_reconnect(state, msg.resp_channel, sid, uid).await,
         MsgData::Start(sid, uid) => handle_start(state, msg.resp_channel, sid, uid).await,
@@ -177,6 +183,28 @@ async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String
         .insert(user_id.clone(), auth_token.clone());
     ch.send(MsgResp::Created(session_id, user_id, auth_token))
         .await;
+    Some(())
+}
+
+// Handle Deploy messages
+
+async fn handle_deploy(
+    state: &mut State,
+    mut ch: RespChannel,
+    session_id: SessionId,
+    user_id: UserId,
+    piece: String,
+    pos: String,
+) -> Option<()> {
+    let msg_resp = {
+        let session = state.sessions.get_mut(&session_id)?;
+        if session.deploy_piece(&user_id, piece, pos).is_some() {
+            MsgResp::Deployed
+        } else {
+            MsgResp::DeployFailure
+        }
+    };
+    ch.send(msg_resp).await;
     Some(())
 }
 
