@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use tokio::spawn;
 use tokio::sync::mpsc::*;
 
-use crate::state::misc::{AuthToken, SessionId, UserId};
-use crate::state::session::Session;
+use super::misc::{AuthToken, SessionId, UserId};
+use super::session::Session;
 
 pub struct State {
     sessions: HashMap<SessionId, Session>,
@@ -59,15 +59,18 @@ pub struct Msg {
 }
 
 pub enum MsgData {
-    ChangeParticipants(UserId, AuthToken, Vec<UserId>),
+    Authenticate(UserId, AuthToken),
+    ChangeParticipants(SessionId, UserId, Vec<UserId>),
     Connect(SessionId, String),
     Create(String),
-    Move(UserId, AuthToken, String),
-    Reconnect(UserId, AuthToken),
-    Start(UserId, AuthToken),
+    Move(SessionId, UserId, String),
+    Reconnect(SessionId, UserId),
+    Start(SessionId, UserId),
 }
 
 pub enum MsgResp {
+    Authenticated(SessionId),
+    AuthenticateFailure,
     ChangedParticipants,
     ChangeParticipantsFailure,
     Connected(UserId, AuthToken),
@@ -83,15 +86,35 @@ pub enum MsgResp {
 
 async fn handle(state: &mut State, msg: Msg) -> Option<()> {
     match msg.data {
-        MsgData::ChangeParticipants(uid, tok, p) => {
-            handle_change_participants(state, msg.resp_channel, uid, tok, p).await
+        MsgData::Authenticate(uid, tok) => {
+            handle_authenticate(state, msg.resp_channel, uid, tok).await
+        }
+        MsgData::ChangeParticipants(sid, uid, p) => {
+            handle_change_participants(state, msg.resp_channel, sid, uid, p).await
         }
         MsgData::Connect(sid, n) => handle_connect(state, msg.resp_channel, sid, n).await,
         MsgData::Create(n) => handle_create(state, msg.resp_channel, n).await,
-        MsgData::Move(uid, tok, c) => handle_move(state, msg.resp_channel, uid, tok, c).await,
-        MsgData::Reconnect(uid, tok) => handle_reconnect(state, msg.resp_channel, uid, tok).await,
-        MsgData::Start(uid, tok) => handle_start(state, msg.resp_channel, uid, tok).await,
+        MsgData::Move(sid, uid, c) => handle_move(state, msg.resp_channel, sid, uid, c).await,
+        MsgData::Reconnect(sid, uid) => handle_reconnect(state, msg.resp_channel, sid, uid).await,
+        MsgData::Start(sid, uid) => handle_start(state, msg.resp_channel, sid, uid).await,
     }
+}
+
+// Handle Authenticate messages
+
+async fn handle_authenticate(
+    state: &mut State,
+    mut ch: RespChannel,
+    user_id: UserId,
+    auth_token: AuthToken,
+) -> Option<()> {
+    let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
+        MsgResp::Authenticated(sid)
+    } else {
+        MsgResp::AuthenticateFailure
+    };
+    ch.send(msg_resp).await;
+    Some(())
 }
 
 // Handle ChangeParticipants messages
@@ -99,17 +122,13 @@ async fn handle(state: &mut State, msg: Msg) -> Option<()> {
 async fn handle_change_participants(
     state: &mut State,
     mut ch: RespChannel,
+    session_id: SessionId,
     user_id: UserId,
-    auth_token: AuthToken,
     participants: Vec<UserId>,
 ) -> Option<()> {
-    let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
-        let session = state.sessions.get_mut(&sid)?;
-        if session.set_participants(&user_id, participants) {
-            MsgResp::ChangedParticipants
-        } else {
-            MsgResp::ChangeParticipantsFailure
-        }
+    let session = state.sessions.get_mut(&session_id)?;
+    let msg_resp = if session.set_participants(&user_id, participants) {
+        MsgResp::ChangedParticipants
     } else {
         MsgResp::ChangeParticipantsFailure
     };
@@ -166,19 +185,17 @@ async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String
 async fn handle_move(
     state: &mut State,
     mut ch: RespChannel,
+    session_id: SessionId,
     user_id: UserId,
-    auth_token: AuthToken,
     change: String,
 ) -> Option<()> {
-    let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
-        let session = state.sessions.get_mut(&sid)?;
+    let msg_resp = {
+        let session = state.sessions.get_mut(&session_id)?;
         if session.move_piece(&user_id, change) {
             MsgResp::Moved
         } else {
             MsgResp::MoveFailure
         }
-    } else {
-        MsgResp::MoveFailure
     };
     ch.send(msg_resp).await;
     Some(())
@@ -189,17 +206,17 @@ async fn handle_move(
 async fn handle_reconnect(
     state: &mut State,
     mut ch: RespChannel,
+    session_id: SessionId,
     user_id: UserId,
-    auth_token: AuthToken,
 ) -> Option<()> {
-    let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
-        MsgResp::Reconnected(
-            sid.clone(),
-            state.sessions.get(&sid)?.get_user_name(&user_id)?.into(),
-        )
-    } else {
-        MsgResp::ReconnectFailure
-    };
+    let msg_resp = MsgResp::Reconnected(
+        session_id.clone(),
+        state
+            .sessions
+            .get(&session_id)?
+            .get_user_name(&user_id)?
+            .into(),
+    );
     ch.send(msg_resp).await;
     Some(())
 }
@@ -209,18 +226,16 @@ async fn handle_reconnect(
 async fn handle_start(
     state: &mut State,
     mut ch: RespChannel,
+    session_id: SessionId,
     user_id: UserId,
-    auth_token: AuthToken,
 ) -> Option<()> {
-    let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
-        let session = state.sessions.get_mut(&sid)?;
+    let msg_resp = {
+        let session = state.sessions.get_mut(&session_id)?;
         if session.start(&user_id) {
             MsgResp::Started
         } else {
             MsgResp::StartFailure
         }
-    } else {
-        MsgResp::StartFailure
     };
     ch.send(msg_resp).await;
     Some(())

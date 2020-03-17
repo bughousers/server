@@ -22,6 +22,7 @@ use hyper::http::response::Builder;
 use hyper::{Body, Method, Request, Response};
 use tokio::sync::mpsc::channel;
 
+use super::state::SessionId;
 use super::state::{Channel, Msg, MsgData, MsgResp};
 use super::ServerError;
 use serialization::{AuthorizedReq, ConfigReq, MoveReq, Req, Resp};
@@ -113,36 +114,45 @@ async fn dispatch_create(ch: Channel, user_name: String) -> DispatchResult {
 }
 
 async fn dispatch_authorized(
-    ch: Channel,
+    mut ch: Channel,
     user_id: String,
     auth_token: String,
     req: AuthorizedReq,
 ) -> DispatchResult {
-    match req {
-        AuthorizedReq::Config { req } => dispatch_config(ch, user_id, auth_token, req).await,
-        AuthorizedReq::Move { req } => dispatch_move(ch, user_id, auth_token, req).await,
-        AuthorizedReq::Reconnect => dispatch_reconnect(ch, user_id, auth_token).await,
+    let resp = msg(
+        &mut ch,
+        MsgData::Authenticate(user_id.clone().into(), auth_token.clone().into()),
+    )
+    .await;
+    match resp {
+        Some(MsgResp::Authenticated(sid)) => match req {
+            AuthorizedReq::Config { req } => dispatch_config(ch, sid, user_id, req).await,
+            AuthorizedReq::Move { req } => dispatch_move(ch, sid, user_id, req).await,
+            AuthorizedReq::Reconnect => dispatch_reconnect(ch, sid, user_id).await,
+        },
+        Some(MsgResp::AuthenticateFailure) => unauthorized(),
+        _ => internal_server_error(),
     }
 }
 
 async fn dispatch_config(
     ch: Channel,
+    session_id: SessionId,
     user_id: String,
-    auth_token: String,
     req: ConfigReq,
 ) -> DispatchResult {
     let (tx, mut rx) = channel::<MsgResp>(1);
     let msg = match req {
         ConfigReq::Participants { participants } => Msg {
             data: MsgData::ChangeParticipants(
+                session_id,
                 user_id.into(),
-                auth_token.into(),
                 participants.iter().map(|p| p.clone().into()).collect(),
             ),
             resp_channel: tx,
         },
         ConfigReq::Start => Msg {
-            data: MsgData::Start(user_id.into(), auth_token.into()),
+            data: MsgData::Start(session_id, user_id.into()),
             resp_channel: tx,
         },
     };
@@ -160,14 +170,14 @@ async fn dispatch_config(
 
 async fn dispatch_move(
     ch: Channel,
+    session_id: SessionId,
     user_id: String,
-    auth_token: String,
     req: MoveReq,
 ) -> DispatchResult {
     let (tx, mut rx) = channel::<MsgResp>(1);
     let msg = match req {
         MoveReq::Move { change } => Msg {
-            data: MsgData::Move(user_id.into(), auth_token.into(), change),
+            data: MsgData::Move(session_id, user_id.into(), change),
             resp_channel: tx,
         },
     };
@@ -181,10 +191,10 @@ async fn dispatch_move(
     }
 }
 
-async fn dispatch_reconnect(ch: Channel, user_id: String, auth_token: String) -> DispatchResult {
+async fn dispatch_reconnect(ch: Channel, session_id: SessionId, user_id: String) -> DispatchResult {
     let (tx, mut rx) = channel::<MsgResp>(1);
     let msg = Msg {
-        data: MsgData::Reconnect(user_id.into(), auth_token.into()),
+        data: MsgData::Reconnect(session_id, user_id.into()),
         resp_channel: tx,
     };
     if let Err(_) = ch.send(msg) {
@@ -204,6 +214,16 @@ async fn dispatch_reconnect(ch: Channel, user_id: String, auth_token: String) ->
 }
 
 // Helper functions
+
+async fn msg(ch: &mut Channel, data: MsgData) -> Option<MsgResp> {
+    let (tx, mut rx) = channel::<MsgResp>(1);
+    let msg = Msg {
+        data: data,
+        resp_channel: tx,
+    };
+    ch.send(msg).ok()?;
+    rx.recv().await
+}
 
 fn validate_user_name(name: &String) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_alphabetic() || c.is_whitespace())
