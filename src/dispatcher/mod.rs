@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod serialization;
 #[cfg(test)]
 mod tests;
 
@@ -22,256 +23,184 @@ use hyper::{Body, Method, Request, Response};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::channel;
 
-use crate::state::{Channel, Msg, MsgData, MsgResp};
-use crate::ServerError;
+use super::state::{Channel, Msg, MsgData, MsgResp};
+use super::ServerError;
+use serialization::{AuthorizedReq, ConfigReq, MoveReq, Req, Resp};
 
 pub type DispatchResult = Result<Response<Body>, ServerError>;
 
 pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/events") => dispatch_events(req).await,
-        (&Method::POST, "/config") => dispatch_config(ch, req.into_body()).await,
-        (&Method::POST, "/connect") => dispatch_connect(ch, req.into_body()).await,
-        (&Method::POST, "/create") => dispatch_create(ch, req.into_body()).await,
-        (&Method::POST, "/move") => dispatch_move(ch, req.into_body()).await,
-        (&Method::POST, "/reconnect") => dispatch_reconnect(ch, req.into_body()).await,
+        (&Method::POST, "/api") => dispatch_api(ch, req.into_body()).await,
         _ => not_found(),
     }
 }
 
-// Handle /events requests
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct Event {}
-
-async fn dispatch_events(req: Request<Body>) -> DispatchResult {
+async fn dispatch_events(_: Request<Body>) -> DispatchResult {
     Ok(Response::new("dispatch_events()".into()))
 }
 
-// Handle /config requests
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct ConfigReq {
-    userId: String,
-    authToken: String,
-    data: ConfigReqData,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(tag = "type")]
-enum ConfigReqData {
-    Participants { participants: Vec<String> },
-    Start,
-}
-
-async fn dispatch_config(ch: Channel, body: Body) -> DispatchResult {
-    let data = body::to_bytes(body).await?;
-    if let Ok(req) = serde_json::from_slice::<ConfigReq>(&data) {
-        let (tx, mut rx) = channel::<MsgResp>(1);
-        let msg = match req.data {
-            ConfigReqData::Participants { participants } => Msg {
-                data: MsgData::ChangeParticipants(
-                    req.userId.into(),
-                    req.authToken.into(),
-                    participants.iter().map(|p| p.clone().into()).collect(),
-                ),
-                resp_channel: tx,
-            },
-            ConfigReqData::Start => Msg {
-                data: MsgData::Start(req.userId.into(), req.authToken.into()),
-                resp_channel: tx,
-            },
-        };
-        if let Err(_) = ch.send(msg) {
-            return internal_server_error();
-        }
-        match rx.recv().await {
-            Some(MsgResp::ChangedParticipants) => ok(),
-            Some(MsgResp::ChangeParticipantsFailure) => unauthorized(),
-            Some(MsgResp::Started) => ok(),
-            Some(MsgResp::StartFailure) => unauthorized(),
-            _ => internal_server_error(),
+async fn dispatch_api(ch: Channel, body: Body) -> DispatchResult {
+    let buf = body::to_bytes(body).await?;
+    if let Ok(req) = serde_json::from_slice::<Req>(&buf) {
+        match req {
+            Req::Connect {
+                sessionId,
+                userName,
+            } => dispatch_connect(ch, sessionId, userName).await,
+            Req::Create { userName } => dispatch_create(ch, userName).await,
+            Req::Authorized {
+                userId,
+                authToken,
+                req,
+            } => dispatch_authorized(ch, userId, authToken, req).await,
         }
     } else {
         bad_request()
     }
 }
 
-// Handle /connect requests
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct ConnectReq {
-    sessionId: String,
-    userName: String,
+async fn dispatch_connect(ch: Channel, session_id: String, user_name: String) -> DispatchResult {
+    if !validate_user_name(&user_name) {
+        return bad_request();
+    }
+    let (tx, mut rx) = channel::<MsgResp>(1);
+    let msg = Msg {
+        data: MsgData::Connect(session_id.into(), user_name),
+        resp_channel: tx,
+    };
+    if let Err(_) = ch.send(msg) {
+        return internal_server_error();
+    }
+    match rx.recv().await {
+        Some(MsgResp::Connected(uid, tok)) => Ok(json_builder().body(
+            serde_json::to_string(&Resp::Connected {
+                userId: uid.into(),
+                authToken: tok.into(),
+            })?
+            .into(),
+        )?),
+        Some(MsgResp::ConnectFailure) => not_found(),
+        _ => internal_server_error(),
+    }
 }
 
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct ConnectResp {
-    userId: String,
-    authToken: String,
+async fn dispatch_create(ch: Channel, user_name: String) -> DispatchResult {
+    if !validate_user_name(&user_name) {
+        return bad_request();
+    }
+    let (tx, mut rx) = channel::<MsgResp>(1);
+    let msg = Msg {
+        data: MsgData::Create(user_name),
+        resp_channel: tx,
+    };
+    if let Err(_) = ch.send(msg) {
+        return internal_server_error();
+    }
+    let msg_resp = rx.recv().await;
+    if let Some(MsgResp::Created(sid, uid, tok)) = msg_resp {
+        Ok(json_builder().body(
+            serde_json::to_string(&Resp::Created {
+                sessionId: sid.into(),
+                userId: uid.into(),
+                authToken: tok.into(),
+            })?
+            .into(),
+        )?)
+    } else {
+        internal_server_error()
+    }
 }
 
-async fn dispatch_connect(ch: Channel, body: Body) -> DispatchResult {
-    let data = body::to_bytes(body).await?;
-    if let Ok(req) = serde_json::from_slice::<ConnectReq>(&data) {
-        if !validate_user_name(&req.userName) {
-            return bad_request();
-        }
-        let (tx, mut rx) = channel::<MsgResp>(1);
-        let msg = Msg {
-            data: MsgData::Connect(req.sessionId.into(), req.userName),
+async fn dispatch_authorized(
+    ch: Channel,
+    user_id: String,
+    auth_token: String,
+    req: AuthorizedReq,
+) -> DispatchResult {
+    match req {
+        AuthorizedReq::Config { req } => dispatch_config(ch, user_id, auth_token, req).await,
+        AuthorizedReq::Move { req } => dispatch_move(ch, user_id, auth_token, req).await,
+        AuthorizedReq::Reconnect => dispatch_reconnect(ch, user_id, auth_token).await,
+    }
+}
+
+async fn dispatch_config(
+    ch: Channel,
+    user_id: String,
+    auth_token: String,
+    req: ConfigReq,
+) -> DispatchResult {
+    let (tx, mut rx) = channel::<MsgResp>(1);
+    let msg = match req {
+        ConfigReq::Participants { participants } => Msg {
+            data: MsgData::ChangeParticipants(
+                user_id.into(),
+                auth_token.into(),
+                participants.iter().map(|p| p.clone().into()).collect(),
+            ),
             resp_channel: tx,
-        };
-        if let Err(_) = ch.send(msg) {
-            return internal_server_error();
-        }
-        match rx.recv().await {
-            Some(MsgResp::Connected(uid, tok)) => Ok(json_builder().body(
-                serde_json::to_string(&ConnectResp {
-                    userId: uid.into(),
-                    authToken: tok.into(),
-                })?
-                .into(),
-            )?),
-            Some(MsgResp::ConnectFailure) => not_found(),
-            _ => internal_server_error(),
-        }
-    } else {
-        bad_request()
-    }
-}
-
-// Handle /create requests
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct CreateReq {
-    userName: String,
-}
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct CreateResp {
-    sessionId: String,
-    userId: String,
-    authToken: String,
-}
-
-async fn dispatch_create(ch: Channel, body: Body) -> DispatchResult {
-    let data = body::to_bytes(body).await?;
-    if let Ok(req) = serde_json::from_slice::<CreateReq>(&data) {
-        if !validate_user_name(&req.userName) {
-            return bad_request();
-        }
-        let (tx, mut rx) = channel::<MsgResp>(1);
-        let msg = Msg {
-            data: MsgData::Create(req.userName),
+        },
+        ConfigReq::Start => Msg {
+            data: MsgData::Start(user_id.into(), auth_token.into()),
             resp_channel: tx,
-        };
-        if let Err(_) = ch.send(msg) {
-            return internal_server_error();
-        }
-        let msg_resp = rx.recv().await;
-        if let Some(MsgResp::Created(sid, uid, tok)) = msg_resp {
-            Ok(json_builder().body(
-                serde_json::to_string(&CreateResp {
-                    sessionId: sid.into(),
-                    userId: uid.into(),
-                    authToken: tok.into(),
-                })?
-                .into(),
-            )?)
-        } else {
-            internal_server_error()
-        }
-    } else {
-        bad_request()
+        },
+    };
+    if let Err(_) = ch.send(msg) {
+        return internal_server_error();
+    }
+    match rx.recv().await {
+        Some(MsgResp::ChangedParticipants) => ok(),
+        Some(MsgResp::ChangeParticipantsFailure) => unauthorized(),
+        Some(MsgResp::Started) => ok(),
+        Some(MsgResp::StartFailure) => unauthorized(),
+        _ => internal_server_error(),
     }
 }
 
-// Handle /move requests
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct MoveReq {
-    userId: String,
-    authToken: String,
-    data: MoveReqData,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(tag = "type")]
-enum MoveReqData {
-    Move(String),
-}
-
-async fn dispatch_move(ch: Channel, body: Body) -> DispatchResult {
-    let data = body::to_bytes(body).await?;
-    if let Ok(req) = serde_json::from_slice::<MoveReq>(&data) {
-        let (tx, mut rx) = channel::<MsgResp>(1);
-        let msg = match req.data {
-            MoveReqData::Move(c) => Msg {
-                data: MsgData::Move(req.userId.into(), req.authToken.into(), c),
-                resp_channel: tx,
-            },
-        };
-        if let Err(_) = ch.send(msg) {
-            return internal_server_error();
-        }
-        match rx.recv().await {
-            Some(MsgResp::Moved) => ok(),
-            Some(MsgResp::MoveFailure) => unauthorized(),
-            _ => internal_server_error(),
-        }
-    } else {
-        bad_request()
-    }
-}
-
-// Handle /reconnect requests
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct ReconnectReq {
-    userId: String,
-    authToken: String,
-}
-
-#[allow(non_snake_case)]
-#[derive(Clone, Deserialize, Serialize)]
-struct ReconnectResp {
-    sessionId: String,
-    userName: String,
-}
-
-async fn dispatch_reconnect(ch: Channel, body: Body) -> DispatchResult {
-    let data = body::to_bytes(body).await?;
-    if let Ok(req) = serde_json::from_slice::<ReconnectReq>(&data) {
-        let (tx, mut rx) = channel::<MsgResp>(1);
-        let msg = Msg {
-            data: MsgData::Reconnect(req.userId.into(), req.authToken.into()),
+async fn dispatch_move(
+    ch: Channel,
+    user_id: String,
+    auth_token: String,
+    req: MoveReq,
+) -> DispatchResult {
+    let (tx, mut rx) = channel::<MsgResp>(1);
+    let msg = match req {
+        MoveReq::Move { change } => Msg {
+            data: MsgData::Move(user_id.into(), auth_token.into(), change),
             resp_channel: tx,
-        };
-        if let Err(_) = ch.send(msg) {
-            return internal_server_error();
-        }
-        match rx.recv().await {
-            Some(MsgResp::Reconnected(sid, n)) => Ok(json_builder().body(
-                serde_json::to_string(&ReconnectResp {
-                    sessionId: sid.into(),
-                    userName: n,
-                })?
-                .into(),
-            )?),
-            Some(MsgResp::ReconnectFailure) => unauthorized(),
-            _ => internal_server_error(),
-        }
-    } else {
-        bad_request()
+        },
+    };
+    if let Err(_) = ch.send(msg) {
+        return internal_server_error();
+    }
+    match rx.recv().await {
+        Some(MsgResp::Moved) => ok(),
+        Some(MsgResp::MoveFailure) => unauthorized(),
+        _ => internal_server_error(),
+    }
+}
+
+async fn dispatch_reconnect(ch: Channel, user_id: String, auth_token: String) -> DispatchResult {
+    let (tx, mut rx) = channel::<MsgResp>(1);
+    let msg = Msg {
+        data: MsgData::Reconnect(user_id.into(), auth_token.into()),
+        resp_channel: tx,
+    };
+    if let Err(_) = ch.send(msg) {
+        return internal_server_error();
+    }
+    match rx.recv().await {
+        Some(MsgResp::Reconnected(sid, n)) => Ok(json_builder().body(
+            serde_json::to_string(&Resp::Reconnected {
+                sessionId: sid.into(),
+                userName: n,
+            })?
+            .into(),
+        )?),
+        Some(MsgResp::ReconnectFailure) => unauthorized(),
+        _ => internal_server_error(),
     }
 }
 
