@@ -90,7 +90,7 @@ impl Session {
         let (col, row) = parse_pos(&pos)?;
         if self
             .logic
-            .deploy_piece(*b == 1, *c == Color::White, parse_piece(&piece)?, col, row)
+            .deploy_piece(*b == 1, *c == Color::White, parse_piece(&piece)?, row, col)
         {
             Some(())
         } else {
