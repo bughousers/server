@@ -107,13 +107,7 @@ async fn handle_change_participants(
 ) -> Option<()> {
     let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
         let session = state.sessions.get_mut(&sid)?;
-        if session.owner == user_id
-            && !session.started
-            && participants
-                .iter()
-                .all(|p| session.user_names.get(p).is_some())
-        {
-            session.participants = participants;
+        if session.set_participants(&user_id, participants) {
             MsgResp::ChangedParticipants
         } else {
             MsgResp::ChangeParticipantsFailure
@@ -136,7 +130,7 @@ async fn handle_connect(
     let resp = if let Some(session) = state.sessions.get_mut(&session_id) {
         let user_id = UserId::new();
         let auth_token = AuthToken::new();
-        session.user_names.insert(user_id.clone(), user_name);
+        session.set_user_name(user_id.clone(), user_name);
         state.session_ids.insert(user_id.clone(), session_id);
         state
             .auth_tokens
@@ -156,7 +150,7 @@ async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String
     let user_id = UserId::new();
     let auth_token = AuthToken::new();
     let mut session = Session::new(user_id.clone());
-    session.user_names.insert(user_id.clone(), user_name);
+    session.set_user_name(user_id.clone(), user_name);
     state.sessions.insert(session_id.clone(), session);
     state
         .session_ids
@@ -204,7 +198,7 @@ async fn handle_reconnect(
     let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
         MsgResp::Reconnected(
             sid.clone(),
-            state.sessions.get(&sid)?.user_names.get(&user_id)?.into(),
+            state.sessions.get(&sid)?.get_user_name(&user_id)?.into(),
         )
     } else {
         MsgResp::ReconnectFailure
@@ -223,8 +217,7 @@ async fn handle_start(
 ) -> Option<()> {
     let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
         let session = state.sessions.get_mut(&sid)?;
-        if session.owner == user_id && session.participants.len() >= 4 {
-            session.started = true;
+        if session.start(&user_id) {
             MsgResp::Started
         } else {
             MsgResp::StartFailure
