@@ -12,16 +12,16 @@ pub enum Req {
     Create {
         userName: String,
     },
-    Authorized {
+    Authenticated {
         userId: String,
         authToken: String,
-        req: AuthorizedReq,
+        req: AuthenticatedReq,
     },
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
-pub enum AuthorizedReq {
+pub enum AuthenticatedReq {
     Config { req: ConfigReq },
     Move { req: MoveReq },
     Reconnect,

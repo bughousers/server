@@ -217,10 +217,10 @@ async fn api_reconnect_after_connect() -> Result<(), ServerError> {
         let connect_resp = serde_json::from_slice::<Resp>(&connect_resp)?;
 
         if let Resp::Connected { userId, authToken } = connect_resp {
-            let req = Req::Authorized {
+            let req = Req::Authenticated {
                 userId: userId,
                 authToken: authToken,
-                req: AuthorizedReq::Reconnect,
+                req: AuthenticatedReq::Reconnect,
             };
             let req = serde_json::to_string(&req)?;
             let req = Body::from(req);
@@ -263,10 +263,10 @@ async fn api_reconnect_after_create() -> Result<(), ServerError> {
         authToken,
     } = create_resp
     {
-        let req = Req::Authorized {
+        let req = Req::Authenticated {
             userId: userId,
             authToken: authToken,
-            req: AuthorizedReq::Reconnect,
+            req: AuthenticatedReq::Reconnect,
         };
         let req = serde_json::to_string(&req)?;
         let req = Body::from(req);

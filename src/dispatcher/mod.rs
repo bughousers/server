@@ -25,7 +25,7 @@ use tokio::sync::mpsc::channel;
 use super::state::SessionId;
 use super::state::{Channel, Msg, MsgData, MsgResp};
 use super::ServerError;
-use serialization::{AuthorizedReq, ConfigReq, MoveReq, Req, Resp};
+use serialization::{AuthenticatedReq, ConfigReq, MoveReq, Req, Resp};
 
 pub type DispatchResult = Result<Response<Body>, ServerError>;
 
@@ -50,11 +50,11 @@ async fn dispatch_api(ch: Channel, body: Body) -> DispatchResult {
                 userName,
             } => dispatch_connect(ch, sessionId, userName).await,
             Req::Create { userName } => dispatch_create(ch, userName).await,
-            Req::Authorized {
+            Req::Authenticated {
                 userId,
                 authToken,
                 req,
-            } => dispatch_authorized(ch, userId, authToken, req).await,
+            } => dispatch_authenticated(ch, userId, authToken, req).await,
         }
     } else {
         bad_request()
@@ -113,11 +113,11 @@ async fn dispatch_create(ch: Channel, user_name: String) -> DispatchResult {
     }
 }
 
-async fn dispatch_authorized(
+async fn dispatch_authenticated(
     mut ch: Channel,
     user_id: String,
     auth_token: String,
-    req: AuthorizedReq,
+    req: AuthenticatedReq,
 ) -> DispatchResult {
     let resp = msg(
         &mut ch,
@@ -126,9 +126,9 @@ async fn dispatch_authorized(
     .await;
     match resp {
         Some(MsgResp::Authenticated(sid)) => match req {
-            AuthorizedReq::Config { req } => dispatch_config(ch, sid, user_id, req).await,
-            AuthorizedReq::Move { req } => dispatch_move(ch, sid, user_id, req).await,
-            AuthorizedReq::Reconnect => dispatch_reconnect(ch, sid, user_id).await,
+            AuthenticatedReq::Config { req } => dispatch_config(ch, sid, user_id, req).await,
+            AuthenticatedReq::Move { req } => dispatch_move(ch, sid, user_id, req).await,
+            AuthenticatedReq::Reconnect => dispatch_reconnect(ch, sid, user_id).await,
         },
         Some(MsgResp::AuthenticateFailure) => unauthorized(),
         _ => internal_server_error(),
