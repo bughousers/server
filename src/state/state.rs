@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 
 use tokio::spawn;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::*;
 
 use super::misc::{AuthToken, SessionId, UserId};
@@ -67,6 +68,7 @@ pub enum MsgData {
     Move(SessionId, UserId, String),
     Reconnect(SessionId, UserId),
     Start(SessionId, UserId),
+    Subscribe(SessionId),
 }
 
 pub enum MsgResp {
@@ -85,6 +87,8 @@ pub enum MsgResp {
     ReconnectFailure,
     Started,
     StartFailure,
+    Subscribed(broadcast::Receiver<String>),
+    SubscribeFailure,
 }
 
 async fn handle(state: &mut State, msg: Msg) -> Option<()> {
@@ -103,6 +107,7 @@ async fn handle(state: &mut State, msg: Msg) -> Option<()> {
         MsgData::Move(sid, uid, c) => handle_move(state, msg.resp_channel, sid, uid, c).await,
         MsgData::Reconnect(sid, uid) => handle_reconnect(state, msg.resp_channel, sid, uid).await,
         MsgData::Start(sid, uid) => handle_start(state, msg.resp_channel, sid, uid).await,
+        MsgData::Subscribe(sid) => handle_subscribe(state, msg.resp_channel, sid).await,
     }
 }
 
@@ -134,6 +139,7 @@ async fn handle_change_participants(
 ) -> Option<()> {
     let session = state.sessions.get_mut(&session_id)?;
     let msg_resp = if session.set_participants(&user_id, participants) {
+        session.notify_all();
         MsgResp::ChangedParticipants
     } else {
         MsgResp::ChangeParticipantsFailure
@@ -158,6 +164,7 @@ async fn handle_connect(
         state
             .auth_tokens
             .insert(user_id.clone(), auth_token.clone());
+        session.notify_all();
         MsgResp::Connected(user_id, auth_token)
     } else {
         MsgResp::ConnectFailure
@@ -174,6 +181,7 @@ async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String
     let auth_token = AuthToken::new();
     let mut session = Session::new(user_id.clone());
     session.set_user_name(user_id.clone(), user_name);
+    session.notify_all();
     state.sessions.insert(session_id.clone(), session);
     state
         .session_ids
@@ -199,6 +207,7 @@ async fn handle_deploy(
     let msg_resp = {
         let session = state.sessions.get_mut(&session_id)?;
         if session.deploy_piece(&user_id, piece, pos).is_some() {
+            session.notify_all();
             MsgResp::Deployed
         } else {
             MsgResp::DeployFailure
@@ -220,6 +229,7 @@ async fn handle_move(
     let msg_resp = {
         let session = state.sessions.get_mut(&session_id)?;
         if session.move_piece(&user_id, change) {
+            session.notify_all();
             MsgResp::Moved
         } else {
             MsgResp::MoveFailure
@@ -260,10 +270,26 @@ async fn handle_start(
     let msg_resp = {
         let session = state.sessions.get_mut(&session_id)?;
         if session.start(&user_id) {
+            session.notify_all();
             MsgResp::Started
         } else {
             MsgResp::StartFailure
         }
+    };
+    ch.send(msg_resp).await;
+    Some(())
+}
+
+// Handle Subscribe messages
+
+async fn handle_subscribe(
+    state: &mut State,
+    mut ch: RespChannel,
+    session_id: SessionId,
+) -> Option<()> {
+    let msg_resp = {
+        let rx = state.sessions.get_mut(&session_id)?.subscribe();
+        MsgResp::Subscribed(rx)
     };
     ch.send(msg_resp).await;
     Some(())

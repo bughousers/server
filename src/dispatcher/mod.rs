@@ -13,9 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-mod serialization;
+// TODO: Make this private again. Events should
+// be handled inside the dispatcher.
+pub mod serialization;
 #[cfg(test)]
 mod tests;
+
+use std::collections::HashMap;
 
 use hyper::body;
 use hyper::http::response::Builder;
@@ -31,14 +35,35 @@ pub type DispatchResult = Result<Response<Body>, ServerError>;
 
 pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
     match (req.method(), req.uri().path()) {
-        (&Method::GET, "/events") => dispatch_events(req).await,
+        (&Method::GET, "/events") => dispatch_events(ch, req).await,
         (&Method::POST, "/api") => dispatch_api(ch, req.into_body()).await,
         _ => not_found(),
     }
 }
 
-async fn dispatch_events(_: Request<Body>) -> DispatchResult {
-    Ok(Response::new("dispatch_events()".into()))
+async fn dispatch_events(mut ch: Channel, req: Request<Body>) -> DispatchResult {
+    if let Some(query) = req.uri().query() {
+        let queries: HashMap<&str, &str> = query
+            .split('&')
+            .map(|q| {
+                let mut it = q.splitn(2, '=');
+                let k = it.next().unwrap_or("");
+                let v = it.next().unwrap_or("");
+                (k, v)
+            })
+            .collect();
+        if let Some(&session_id) = queries.get("session_id") {
+            let resp = msg(&mut ch, MsgData::Subscribe(session_id.to_owned().into())).await;
+            match resp {
+                Some(MsgResp::Subscribed(rx)) => Ok(builder().body(Body::wrap_stream(rx))?),
+                _ => internal_server_error(),
+            }
+        } else {
+            not_found()
+        }
+    } else {
+        not_found()
+    }
 }
 
 async fn dispatch_api(ch: Channel, body: Body) -> DispatchResult {

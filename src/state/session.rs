@@ -15,15 +15,29 @@
 
 use std::collections::HashMap;
 
+use bughouse_rs::infoCourier::infoCourier::gen_yfen;
 use bughouse_rs::logic::board::Piece;
 use bughouse_rs::logic::ChessLogic;
 use bughouse_rs::parse::parser::parse as parse_change;
+use tokio::sync::broadcast::{channel, Receiver, Sender};
 
+use crate::dispatcher::serialization::Event;
 use crate::state::UserId;
+use crate::ServerError;
 
+#[derive(Clone, Copy)]
 enum Color {
     Black,
     White,
+}
+
+impl Into<String> for Color {
+    fn into(self) -> String {
+        match self {
+            Color::Black => "black".into(),
+            Color::White => "white".into(),
+        }
+    }
 }
 
 impl PartialEq for Color {
@@ -43,10 +57,13 @@ pub struct Session {
     active_participants: HashMap<UserId, (usize, Color)>,
     started: bool,
     logic: ChessLogic,
+    tx: Sender<String>,
+    rx: Receiver<String>,
 }
 
 impl Session {
     pub fn new(owner: UserId) -> Self {
+        let (tx, rx) = channel(16);
         Self {
             owner,
             user_names: HashMap::new(),
@@ -54,6 +71,8 @@ impl Session {
             active_participants: HashMap::with_capacity(4),
             started: false,
             logic: ChessLogic::new(),
+            tx,
+            rx,
         }
     }
 
@@ -113,6 +132,35 @@ impl Session {
         } else {
             false
         }
+    }
+
+    // TODO: Move this to a more appropriate
+    // module.
+    pub fn notify_all(&mut self) -> Result<(), ServerError> {
+        let (fen1, fen2) = gen_yfen(&mut self.logic);
+        let ev = Event {
+            owner: self.owner.clone().into(),
+            user_names: self
+                .user_names
+                .iter()
+                .map(|(k, v)| (k.clone().into(), v.clone()))
+                .collect(),
+            participants: self.participants.iter().map(|p| p.clone().into()).collect(),
+            active_participants: self
+                .active_participants
+                .iter()
+                .map(|(k, (b, c))| (k.clone().into(), (*b, (*c).into())))
+                .collect(),
+            started: self.started,
+            boards: vec![fen1, fen2],
+        };
+        let json = serde_json::to_string(&ev)?;
+        self.tx.send(format!("data: {}", json));
+        Ok(())
+    }
+
+    pub fn subscribe(&mut self) -> Receiver<String> {
+        self.tx.subscribe()
     }
 }
 

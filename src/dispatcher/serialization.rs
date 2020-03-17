@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use hyper::Body;
 use serde::{Deserialize, Serialize};
 
@@ -66,4 +68,16 @@ impl Into<Body> for Resp {
     fn into(self) -> Body {
         Body::from(serde_json::to_string(&self).unwrap())
     }
+}
+
+// Event stream
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct Event {
+    pub owner: String,
+    pub user_names: HashMap<String, String>,
+    pub participants: Vec<String>,
+    pub active_participants: HashMap<String, (usize, String)>,
+    pub started: bool,
+    pub boards: Vec<String>,
 }
