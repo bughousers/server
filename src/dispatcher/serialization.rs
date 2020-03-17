@@ -1,3 +1,4 @@
+use hyper::Body;
 use serde::{Deserialize, Serialize};
 
 // Request types
@@ -58,4 +59,10 @@ pub enum Resp {
         sessionId: String,
         userName: String,
     },
+}
+
+impl Into<Body> for Resp {
+    fn into(self) -> Body {
+        Body::from(serde_json::to_string(&self).unwrap())
+    }
 }

@@ -61,24 +61,21 @@ async fn dispatch_api(ch: Channel, body: Body) -> DispatchResult {
     }
 }
 
-async fn dispatch_connect(ch: Channel, session_id: String, user_name: String) -> DispatchResult {
+async fn dispatch_connect(
+    mut ch: Channel,
+    session_id: String,
+    user_name: String,
+) -> DispatchResult {
     if !validate_user_name(&user_name) {
         return bad_request();
     }
-    let (tx, mut rx) = channel::<MsgResp>(1);
-    let msg = Msg {
-        data: MsgData::Connect(session_id.into(), user_name),
-        resp_channel: tx,
-    };
-    if let Err(_) = ch.send(msg) {
-        return internal_server_error();
-    }
-    match rx.recv().await {
+    let resp = msg(&mut ch, MsgData::Connect(session_id.into(), user_name)).await;
+    match resp {
         Some(MsgResp::Connected(uid, tok)) => Ok(json_builder().body(
-            serde_json::to_string(&Resp::Connected {
+            Resp::Connected {
                 userId: uid.into(),
                 authToken: tok.into(),
-            })?
+            }
             .into(),
         )?),
         Some(MsgResp::ConnectFailure) => not_found(),
@@ -86,26 +83,18 @@ async fn dispatch_connect(ch: Channel, session_id: String, user_name: String) ->
     }
 }
 
-async fn dispatch_create(ch: Channel, user_name: String) -> DispatchResult {
+async fn dispatch_create(mut ch: Channel, user_name: String) -> DispatchResult {
     if !validate_user_name(&user_name) {
         return bad_request();
     }
-    let (tx, mut rx) = channel::<MsgResp>(1);
-    let msg = Msg {
-        data: MsgData::Create(user_name),
-        resp_channel: tx,
-    };
-    if let Err(_) = ch.send(msg) {
-        return internal_server_error();
-    }
-    let msg_resp = rx.recv().await;
-    if let Some(MsgResp::Created(sid, uid, tok)) = msg_resp {
+    let resp = msg(&mut ch, MsgData::Create(user_name)).await;
+    if let Some(MsgResp::Created(sid, uid, tok)) = resp {
         Ok(json_builder().body(
-            serde_json::to_string(&Resp::Created {
+            Resp::Created {
                 sessionId: sid.into(),
                 userId: uid.into(),
                 authToken: tok.into(),
-            })?
+            }
             .into(),
         )?)
     } else {
@@ -136,30 +125,21 @@ async fn dispatch_authenticated(
 }
 
 async fn dispatch_config(
-    ch: Channel,
+    mut ch: Channel,
     session_id: SessionId,
     user_id: String,
     req: ConfigReq,
 ) -> DispatchResult {
-    let (tx, mut rx) = channel::<MsgResp>(1);
-    let msg = match req {
-        ConfigReq::Participants { participants } => Msg {
-            data: MsgData::ChangeParticipants(
-                session_id,
-                user_id.into(),
-                participants.iter().map(|p| p.clone().into()).collect(),
-            ),
-            resp_channel: tx,
-        },
-        ConfigReq::Start => Msg {
-            data: MsgData::Start(session_id, user_id.into()),
-            resp_channel: tx,
-        },
+    let data = match req {
+        ConfigReq::Participants { participants } => MsgData::ChangeParticipants(
+            session_id,
+            user_id.into(),
+            participants.iter().map(|p| p.clone().into()).collect(),
+        ),
+        ConfigReq::Start => MsgData::Start(session_id, user_id.into()),
     };
-    if let Err(_) = ch.send(msg) {
-        return internal_server_error();
-    }
-    match rx.recv().await {
+    let resp = msg(&mut ch, data).await;
+    match resp {
         Some(MsgResp::ChangedParticipants) => ok(),
         Some(MsgResp::ChangeParticipantsFailure) => unauthorized(),
         Some(MsgResp::Started) => ok(),
@@ -169,43 +149,34 @@ async fn dispatch_config(
 }
 
 async fn dispatch_move(
-    ch: Channel,
+    mut ch: Channel,
     session_id: SessionId,
     user_id: String,
     req: MoveReq,
 ) -> DispatchResult {
-    let (tx, mut rx) = channel::<MsgResp>(1);
-    let msg = match req {
-        MoveReq::Move { change } => Msg {
-            data: MsgData::Move(session_id, user_id.into(), change),
-            resp_channel: tx,
-        },
+    let data = match req {
+        MoveReq::Move { change } => MsgData::Move(session_id, user_id.into(), change),
     };
-    if let Err(_) = ch.send(msg) {
-        return internal_server_error();
-    }
-    match rx.recv().await {
+    let resp = msg(&mut ch, data).await;
+    match resp {
         Some(MsgResp::Moved) => ok(),
         Some(MsgResp::MoveFailure) => unauthorized(),
         _ => internal_server_error(),
     }
 }
 
-async fn dispatch_reconnect(ch: Channel, session_id: SessionId, user_id: String) -> DispatchResult {
-    let (tx, mut rx) = channel::<MsgResp>(1);
-    let msg = Msg {
-        data: MsgData::Reconnect(session_id, user_id.into()),
-        resp_channel: tx,
-    };
-    if let Err(_) = ch.send(msg) {
-        return internal_server_error();
-    }
-    match rx.recv().await {
+async fn dispatch_reconnect(
+    mut ch: Channel,
+    session_id: SessionId,
+    user_id: String,
+) -> DispatchResult {
+    let resp = msg(&mut ch, MsgData::Reconnect(session_id, user_id.into())).await;
+    match resp {
         Some(MsgResp::Reconnected(sid, n)) => Ok(json_builder().body(
-            serde_json::to_string(&Resp::Reconnected {
+            Resp::Reconnected {
                 sessionId: sid.into(),
                 userName: n,
-            })?
+            }
             .into(),
         )?),
         Some(MsgResp::ReconnectFailure) => unauthorized(),
