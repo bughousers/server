@@ -20,7 +20,6 @@ mod tests;
 use hyper::body;
 use hyper::http::response::Builder;
 use hyper::{Body, Method, Request, Response};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::channel;
 
 use super::state::{Channel, Msg, MsgData, MsgResp};
