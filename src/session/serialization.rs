@@ -13,12 +13,31 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
+
+use bughouse_rs::infoCourier::infoCourier::gen_yfen;
+use serde::{Deserialize, Serialize};
+
+use crate::common::User;
+
+use super::Session;
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Event {
+    pub users: HashMap<String, User>,
     pub owner: String,
-    pub user_names: HashMap<String, String>,
-    pub participants: Vec<String>,
-    pub active_participants: HashMap<String, (usize, String)>,
     pub started: bool,
-    pub boards: Vec<String>,
+    pub boards: [String; 2],
+}
+
+impl From<&mut Session> for Event {
+    fn from(session: &mut Session) -> Self {
+        let (x, y) = gen_yfen(&mut session.logic);
+        Event {
+            users: session.users.clone(),
+            owner: session.owner.clone(),
+            started: session.started,
+            boards: [x, y],
+        }
+    }
 }

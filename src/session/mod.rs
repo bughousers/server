@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod serialization;
 mod utils;
 
 use std::collections::HashMap;
@@ -67,6 +68,14 @@ impl Session {
         });
         tx
     }
+
+    fn notify_all(&mut self) -> Option<()> {
+        let ev: serialization::Event = self.into();
+        let ev = serde_json::to_string(&ev);
+        let ev = format!("data: {}\n\n", ev.ok()?);
+        self.tx.send(ev).ok()?;
+        Some(())
+    }
 }
 
 // Message types
@@ -104,6 +113,7 @@ pub enum Msg {
         auth_token: AuthToken,
         change: String,
     },
+    NotifyAll,
     Subscribe,
 }
 
@@ -147,6 +157,7 @@ async fn handle(s: &mut Session, mut msg_container: MsgContainer) {
             user_id,
         } => handle_insert_user_id(s, auth_token, user_id).await,
         Msg::MovePiece { auth_token, change } => handle_move_piece(s, auth_token, change).await,
+        Msg::NotifyAll => handle_notify_all(s).await,
         Msg::Subscribe => handle_subscribe(s).await,
     };
     if let Some(reply) = reply {
@@ -195,6 +206,7 @@ async fn handle_deploy_piece(
                 row,
                 col,
             ) {
+                s.notify_all();
                 Some(Reply::Success)
             } else {
                 None
@@ -219,6 +231,7 @@ async fn handle_insert_user(s: &mut Session, user_id: UserId, user: User) -> Opt
         return None;
     }
     s.users.insert(user_id, user);
+    s.notify_all();
     Some(Reply::Success)
 }
 
@@ -253,6 +266,7 @@ async fn handle_move_piece(
             }
             let [i, j, i_new, j_new] = parse_change(&change);
             if s.logic.movemaker(is_on_first_board, i, j, i_new, j_new) {
+                s.notify_all();
                 Some(Reply::Success)
             } else {
                 None
@@ -260,6 +274,11 @@ async fn handle_move_piece(
         }
         _ => None,
     }
+}
+
+async fn handle_notify_all(s: &mut Session) -> Option<Reply> {
+    s.notify_all()?;
+    Some(Reply::Success)
 }
 
 async fn handle_subscribe(s: &mut Session) -> Option<Reply> {
@@ -275,6 +294,7 @@ async fn handle_set_participants(s: &mut Session, user_ids: Vec<UserId>) -> Opti
     for uid in user_ids {
         s.users.get_mut(&uid)?.status = UserStatus::Inactive;
     }
+    s.notify_all();
     Some(Reply::Success)
 }
 
@@ -283,5 +303,6 @@ async fn handle_start(s: &mut Session) -> Option<Reply> {
         return None;
     }
     s.started = true;
+    s.notify_all();
     Some(Reply::Success)
 }
