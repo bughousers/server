@@ -19,7 +19,6 @@ mod utils;
 use std::collections::HashMap;
 
 use bughouse_rs::logic::ChessLogic;
-use bughouse_rs::parse::parser::parse as parse_change;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 
@@ -280,7 +279,7 @@ async fn handle_move_piece(
             if is_whites_turn != is_white {
                 return None;
             }
-            let [i, j, i_new, j_new] = parse_change(&change);
+            let [i, j, i_new, j_new] = utils::parse_change(&change);
             if s.logic.movemaker(is_on_first_board, i, j, i_new, j_new) {
                 s.notify_all();
                 Some(Reply::Success)

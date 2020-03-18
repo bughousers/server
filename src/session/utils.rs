@@ -1,5 +1,7 @@
 use bughouse_rs::logic::board::Piece;
 
+pub use bughouse_rs::parse::parser::parse as parse_change;
+
 pub fn validate_user_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_alphabetic() || c.is_whitespace())
 }
