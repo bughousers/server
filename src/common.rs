@@ -70,3 +70,12 @@ pub enum UserStatus {
     Inactive,
     Spectator,
 }
+
+impl UserStatus {
+    pub fn active(is_white: bool, is_on_first_board: bool) -> Self {
+        UserStatus::Active {
+            is_white,
+            is_on_first_board,
+        }
+    }
+}
