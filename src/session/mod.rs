@@ -13,311 +13,108 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+mod messages;
 mod serialization;
+mod session;
 mod utils;
 
-use std::collections::HashMap;
-
-use bughouse_rs::logic::ChessLogic;
+use futures::channel::mpsc;
+use futures::prelude::*;
 use tokio::sync::broadcast;
-use tokio::sync::mpsc;
 
-use crate::common::{AuthToken, User, UserId, UserStatus};
+use crate::common::{AuthToken, User, UserId};
 
-pub type Channel = mpsc::Sender<MsgContainer>;
+use messages::Message;
+use session::Session;
 
-pub struct Session {
-    user_ids: HashMap<AuthToken, UserId>,
-    users: HashMap<UserId, User>,
-    owner: UserId,
-    logic: ChessLogic,
-    started: bool,
-    tx: broadcast::Sender<String>,
-    broadcast_failures: usize,
+pub struct SessionActor {
+    tx: mpsc::Sender<Message>,
 }
 
-impl Session {
-    pub fn new(owner: UserId) -> Self {
-        let (tx, _) = broadcast::channel(16);
-        Self {
-            user_ids: HashMap::with_capacity(4),
-            users: HashMap::with_capacity(4),
-            owner,
-            logic: ChessLogic::new(),
-            started: false,
-            tx,
-            broadcast_failures: 0,
-        }
-    }
-
-    pub async fn msg(ch: &mut Channel, msg: Msg) -> Option<Reply> {
-        let (tx, mut rx) = mpsc::channel(1);
-        ch.send(MsgContainer { msg: msg, tx }).await.ok()?;
-        rx.recv().await
-    }
-
-    pub fn serve(mut self) -> Channel {
+impl SessionActor {
+    pub fn new(owner_id: String) -> Self {
         let (tx, mut rx) = mpsc::channel(16);
         tokio::spawn(async move {
+            let mut session = Session::new(owner_id);
             loop {
-                if let Some(msg_container) = rx.recv().await {
-                    handle(&mut self, msg_container).await;
-                } else {
-                    break;
+                match rx.next().await {
+                    Some(msg) => session.handle(msg).await,
+                    None => break,
                 }
             }
         });
-        tx
+        Self { tx }
     }
 
-    fn notify_all(&mut self) -> Option<()> {
-        let ev: serialization::Event = self.into();
-        let ev = serde_json::to_string(&ev);
-        let ev = format!("data: {}\n\n", ev.ok()?);
-        if self.tx.send(ev).is_ok() {
-            self.broadcast_failures = 0;
-            Some(())
-        } else {
-            self.broadcast_failures += 1;
-            None
-        }
-    }
-}
-
-// Message types
-
-pub struct MsgContainer {
-    msg: Msg,
-    tx: mpsc::Sender<Reply>,
-}
-
-pub enum Msg {
-    Authorized {
-        auth_token: AuthToken,
-        msg: AuthorizedMsg,
-    },
-    DeployPiece {
+    pub async fn deploy_piece(
+        &mut self,
         auth_token: AuthToken,
         piece: String,
         pos: String,
-    },
-    GetUser {
-        user_id: UserId,
-    },
-    GetUserId {
+    ) -> Option<()> {
+        let (msg, rx) = Message::deploy_piece(auth_token, piece, pos);
+        self.tx.send(msg).await.ok()?;
+        rx.await.ok()
+    }
+
+    pub async fn get_user(&mut self, user_id: UserId) -> Option<User> {
+        let (msg, rx) = Message::get_user(user_id);
+        self.tx.send(msg).await.ok()?;
+        rx.await.ok()
+    }
+
+    pub async fn get_user_id(&mut self, auth_token: AuthToken) -> Option<UserId> {
+        let (msg, rx) = Message::get_user_id(auth_token);
+        self.tx.send(msg).await.ok()?;
+        rx.await.ok()
+    }
+
+    pub async fn insert_user(&mut self, user_id: UserId, user: User) {
+        let _ = self.tx.send(Message::insert_user(user_id, user)).await;
+    }
+
+    pub async fn insert_user_id(&mut self, auth_token: AuthToken, user_id: UserId) {
+        let _ = self
+            .tx
+            .send(Message::insert_user_id(auth_token, user_id))
+            .await;
+    }
+
+    pub async fn is_alive(&mut self) -> Option<bool> {
+        let (msg, rx) = Message::is_alive();
+        self.tx.send(msg).await.ok()?;
+        rx.await.ok()
+    }
+
+    pub async fn move_piece(&mut self, auth_token: AuthToken, change: String) -> Option<()> {
+        let (msg, rx) = Message::move_piece(auth_token, change);
+        self.tx.send(msg).await.ok()?;
+        rx.await.ok()
+    }
+
+    pub async fn notify_all(&mut self) {
+        let _ = self.tx.send(Message::notify_all()).await;
+    }
+
+    pub async fn set_participants(
+        &mut self,
         auth_token: AuthToken,
-    },
-    InsertUser {
-        user_id: UserId,
-        user: User,
-    },
-    InsertUserId {
-        auth_token: AuthToken,
-        user_id: UserId,
-    },
-    IsAlive,
-    MovePiece {
-        auth_token: AuthToken,
-        change: String,
-    },
-    NotifyAll,
-    Subscribe,
-}
-
-pub enum AuthorizedMsg {
-    SetParticipants { user_ids: Vec<UserId> },
-    Start,
-}
-
-pub enum Reply {
-    Success,
-    Failure,
-    GetUser { user: User },
-    GetUserId { user_id: UserId },
-    IsAlive { alive: bool },
-    Subscribe { rx: broadcast::Receiver<String> },
-}
-
-impl Reply {
-    pub fn is_successful(&self) -> bool {
-        match self {
-            Reply::Failure => false,
-            _ => true,
-        }
+        participants: Vec<UserId>,
+    ) -> Option<()> {
+        let (msg, rx) = Message::set_participants(auth_token, participants);
+        self.tx.send(msg).await.ok()?;
+        rx.await.ok()
     }
-}
 
-// Handlers
-
-async fn handle(s: &mut Session, mut msg_container: MsgContainer) {
-    let reply = match msg_container.msg {
-        Msg::Authorized { auth_token, msg } => handle_authorized(s, auth_token, msg).await,
-        Msg::DeployPiece {
-            auth_token,
-            piece,
-            pos,
-        } => handle_deploy_piece(s, auth_token, piece, pos).await,
-        Msg::GetUser { user_id } => handle_get_user(s, user_id).await,
-        Msg::GetUserId { auth_token } => handle_get_user_id(s, auth_token).await,
-        Msg::InsertUser { user_id, user } => handle_insert_user(s, user_id, user).await,
-        Msg::InsertUserId {
-            auth_token,
-            user_id,
-        } => handle_insert_user_id(s, auth_token, user_id).await,
-        Msg::IsAlive => handle_is_alive(s).await,
-        Msg::MovePiece { auth_token, change } => handle_move_piece(s, auth_token, change).await,
-        Msg::NotifyAll => handle_notify_all(s).await,
-        Msg::Subscribe => handle_subscribe(s).await,
-    };
-    if let Some(reply) = reply {
-        msg_container.tx.send(reply).await;
-    } else {
-        msg_container.tx.send(Reply::Failure).await;
+    pub async fn start(&mut self, auth_token: AuthToken) -> Option<()> {
+        let (msg, rx) = Message::start(auth_token);
+        self.tx.send(msg).await.ok()?;
+        rx.await.ok()
     }
-}
 
-async fn handle_authorized(
-    s: &mut Session,
-    auth_token: AuthToken,
-    msg: AuthorizedMsg,
-) -> Option<Reply> {
-    let user_id = s.user_ids.get(&auth_token)?;
-    if *user_id == s.owner {
-        match msg {
-            AuthorizedMsg::SetParticipants { user_ids } => {
-                handle_set_participants(s, user_ids).await
-            }
-            AuthorizedMsg::Start => handle_start(s).await,
-        }
-    } else {
-        None
+    pub async fn subscribe(&mut self) -> Option<broadcast::Receiver<String>> {
+        let (msg, rx) = Message::subscribe();
+        self.tx.send(msg).await.ok()?;
+        rx.await.ok()
     }
-}
-
-async fn handle_deploy_piece(
-    s: &mut Session,
-    auth_token: AuthToken,
-    piece: String,
-    pos: String,
-) -> Option<Reply> {
-    let user_id = s.user_ids.get(&auth_token)?;
-    let user = s.users.get(user_id)?;
-    match user.status {
-        UserStatus::Active {
-            is_white,
-            is_on_first_board,
-        } => {
-            let (col, row) = utils::parse_pos(&pos)?;
-            if s.logic.deploy_piece(
-                is_on_first_board,
-                is_white,
-                utils::parse_piece(&piece)?,
-                row,
-                col,
-            ) {
-                s.notify_all();
-                Some(Reply::Success)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
-async fn handle_get_user(s: &mut Session, user_id: UserId) -> Option<Reply> {
-    let user = s.users.get(&user_id)?.clone();
-    Some(Reply::GetUser { user })
-}
-
-async fn handle_get_user_id(s: &mut Session, auth_token: AuthToken) -> Option<Reply> {
-    let user_id = s.user_ids.get(&auth_token)?.clone();
-    Some(Reply::GetUserId { user_id })
-}
-
-async fn handle_insert_user(s: &mut Session, user_id: UserId, user: User) -> Option<Reply> {
-    if !utils::validate_user_name(&user.name) {
-        return None;
-    }
-    s.users.insert(user_id, user);
-    s.notify_all();
-    Some(Reply::Success)
-}
-
-async fn handle_insert_user_id(
-    s: &mut Session,
-    auth_token: AuthToken,
-    user_id: UserId,
-) -> Option<Reply> {
-    s.user_ids.insert(auth_token, user_id);
-    Some(Reply::Success)
-}
-
-async fn handle_is_alive(s: &mut Session) -> Option<Reply> {
-    Some(Reply::IsAlive {
-        alive: s.broadcast_failures < 20,
-    })
-}
-
-async fn handle_move_piece(
-    s: &mut Session,
-    auth_token: AuthToken,
-    change: String,
-) -> Option<Reply> {
-    let user_id = s.user_ids.get(&auth_token)?;
-    let user = s.users.get(user_id)?;
-    match user.status {
-        UserStatus::Active {
-            is_white,
-            is_on_first_board,
-        } => {
-            let is_whites_turn = if is_on_first_board {
-                s.logic.white_active_1
-            } else {
-                s.logic.white_active_2
-            };
-            if is_whites_turn != is_white {
-                return None;
-            }
-            let [i, j, i_new, j_new] = utils::parse_change(&change);
-            if s.logic.movemaker(is_on_first_board, i, j, i_new, j_new) {
-                s.notify_all();
-                Some(Reply::Success)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
-async fn handle_notify_all(s: &mut Session) -> Option<Reply> {
-    s.notify_all()?;
-    Some(Reply::Success)
-}
-
-async fn handle_subscribe(s: &mut Session) -> Option<Reply> {
-    Some(Reply::Subscribe {
-        rx: s.tx.subscribe(),
-    })
-}
-
-async fn handle_set_participants(s: &mut Session, user_ids: Vec<UserId>) -> Option<Reply> {
-    if s.started || user_ids.iter().any(|uid| !s.users.contains_key(uid)) {
-        return None;
-    }
-    for uid in user_ids {
-        s.users.get_mut(&uid)?.status = UserStatus::Inactive;
-    }
-    s.notify_all();
-    Some(Reply::Success)
-}
-
-async fn handle_start(s: &mut Session) -> Option<Reply> {
-    if s.started || s.users.values().filter(|&u| u.is_participant()).count() < 4 {
-        return None;
-    }
-    s.started = true;
-    s.notify_all();
-    Some(Reply::Success)
 }

@@ -25,7 +25,7 @@ use super::Session;
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Event {
     pub users: HashMap<String, User>,
-    pub owner: String,
+    pub owner_id: String,
     pub started: bool,
     pub boards: [String; 2],
 }
@@ -35,7 +35,7 @@ impl From<&mut Session> for Event {
         let (x, y) = gen_yfen(&mut session.logic);
         Event {
             users: session.users.clone(),
-            owner: session.owner.clone(),
+            owner_id: session.owner_id.clone(),
             started: session.started,
             boards: [x, y],
         }

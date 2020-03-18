@@ -39,10 +39,7 @@ impl User {
 
     pub fn is_active(&self) -> bool {
         match self.status {
-            UserStatus::Active {
-                is_white: _,
-                is_on_first_board: _,
-            } => true,
+            UserStatus::Active(_, _) => true,
             _ => false,
         }
     }
@@ -61,21 +58,8 @@ impl User {
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[serde(tag = "type")]
 pub enum UserStatus {
-    Active {
-        is_white: bool,
-        is_on_first_board: bool,
-    },
+    Active(bool, bool),
     Inactive,
     Spectator,
-}
-
-impl UserStatus {
-    pub fn active(is_white: bool, is_on_first_board: bool) -> Self {
-        UserStatus::Active {
-            is_white,
-            is_on_first_board,
-        }
-    }
 }
