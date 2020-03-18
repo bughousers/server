@@ -34,6 +34,7 @@ pub struct Session {
     logic: ChessLogic,
     started: bool,
     tx: broadcast::Sender<String>,
+    broadcast_failures: usize,
 }
 
 impl Session {
@@ -46,6 +47,7 @@ impl Session {
             logic: ChessLogic::new(),
             started: false,
             tx,
+            broadcast_failures: 0,
         }
     }
 
@@ -73,8 +75,13 @@ impl Session {
         let ev: serialization::Event = self.into();
         let ev = serde_json::to_string(&ev);
         let ev = format!("data: {}\n\n", ev.ok()?);
-        self.tx.send(ev).ok()?;
-        Some(())
+        if self.tx.send(ev).is_ok() {
+            self.broadcast_failures = 0;
+            Some(())
+        } else {
+            self.broadcast_failures += 1;
+            None
+        }
     }
 }
 
@@ -109,6 +116,7 @@ pub enum Msg {
         auth_token: AuthToken,
         user_id: UserId,
     },
+    IsAlive,
     MovePiece {
         auth_token: AuthToken,
         change: String,
@@ -127,6 +135,7 @@ pub enum Reply {
     Failure,
     GetUser { user: User },
     GetUserId { user_id: UserId },
+    IsAlive { alive: bool },
     Subscribe { rx: broadcast::Receiver<String> },
 }
 
@@ -156,6 +165,7 @@ async fn handle(s: &mut Session, mut msg_container: MsgContainer) {
             auth_token,
             user_id,
         } => handle_insert_user_id(s, auth_token, user_id).await,
+        Msg::IsAlive => handle_is_alive(s).await,
         Msg::MovePiece { auth_token, change } => handle_move_piece(s, auth_token, change).await,
         Msg::NotifyAll => handle_notify_all(s).await,
         Msg::Subscribe => handle_subscribe(s).await,
@@ -242,6 +252,12 @@ async fn handle_insert_user_id(
 ) -> Option<Reply> {
     s.user_ids.insert(auth_token, user_id);
     Some(Reply::Success)
+}
+
+async fn handle_is_alive(s: &mut Session) -> Option<Reply> {
+    Some(Reply::IsAlive {
+        alive: s.broadcast_failures < 20,
+    })
 }
 
 async fn handle_move_piece(

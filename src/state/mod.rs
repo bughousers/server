@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use rand::Rng;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+use tokio::time;
 
 use crate::common::{AuthToken, SessionId, User, UserId};
 use crate::session;
@@ -55,6 +56,14 @@ impl State {
                 }
             }
         });
+        let tx2 = tx.clone();
+        tokio::spawn(async move {
+            let mut tx = tx2;
+            loop {
+                time::delay_for(time::Duration::from_secs(900)).await;
+                State::msg(&mut tx, Msg::GarbageCollect).await;
+            }
+        });
         tx
     }
 }
@@ -78,6 +87,7 @@ pub enum Msg {
     Create {
         user_name: String,
     },
+    GarbageCollect,
     Subscribe {
         session_id: SessionId,
     },
@@ -121,6 +131,7 @@ async fn handle(s: &mut State, mut msg_container: MsgContainer) {
             user_name,
         } => handle_connect(s, session_id, user_name).await,
         Msg::Create { user_name } => handle_create(s, user_name).await,
+        Msg::GarbageCollect => handle_garbage_collect(s).await,
         Msg::Subscribe { session_id } => handle_subscribe(s, session_id).await,
     };
     if let Some(reply) = reply {
@@ -215,6 +226,37 @@ async fn handle_create(s: &mut State, user_name: String) -> Option<Reply> {
     s.sessions.insert(session_id.clone(), ch);
     s.session_ids.insert(auth_token.clone(), session_id);
     Some(Reply::Create { auth_token })
+}
+
+async fn handle_garbage_collect(s: &mut State) -> Option<Reply> {
+    let mut marked = Vec::new();
+    // Mark
+    for (sid, ch) in s.sessions.iter_mut() {
+        let reply = Session::msg(ch, session::Msg::IsAlive).await;
+        match reply {
+            Some(session::Reply::IsAlive { alive }) => {
+                if !alive {
+                    marked.push(sid.to_owned());
+                }
+            }
+            _ => {
+                marked.push(sid.to_owned());
+            }
+        }
+    }
+    // Sweep
+    if !marked.is_empty() {
+        for sid in &marked {
+            s.sessions.remove(sid);
+        }
+        s.session_ids = s
+            .session_ids
+            .iter()
+            .filter(|(_, sid)| !marked.contains(*sid))
+            .map(|(uid, sid)| (uid.to_owned(), sid.to_owned()))
+            .collect();
+    }
+    Some(Reply::Success)
 }
 
 async fn handle_subscribe(s: &mut State, session_id: SessionId) -> Option<Reply> {
