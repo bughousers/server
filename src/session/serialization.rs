@@ -13,30 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-mod common;
-mod dispatcher;
-mod session;
-mod state;
-
-use std::error::Error;
-
-use hyper::service::{make_service_fn, service_fn};
-use hyper::Server;
-
-use dispatcher::dispatch;
-use state::State;
-
-pub type ServerError = Box<dyn Error + Send + Sync>;
-
-const LISTEN_ADDR: &'static str = "0.0.0.0:8080";
-
-#[tokio::main]
-async fn main() -> Result<(), ServerError> {
-    let tx = State::new().serve();
-    let make_svc = make_service_fn(|_| {
-        let tx = tx.clone();
-        async { Ok::<_, ServerError>(service_fn(move |req| dispatch(tx.clone(), req))) }
-    });
-    Server::bind(&LISTEN_ADDR.parse()?).serve(make_svc).await?;
-    Ok(())
+#[derive(Clone, Deserialize, Serialize)]
+pub struct Event {
+    pub owner: String,
+    pub user_names: HashMap<String, String>,
+    pub participants: Vec<String>,
+    pub active_participants: HashMap<String, (usize, String)>,
+    pub started: bool,
+    pub boards: Vec<String>,
 }

@@ -13,25 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// TODO: Make this private again. Events should
-// be handled inside the dispatcher.
-pub mod serialization;
-#[cfg(test)]
-mod tests;
+mod serialization;
 
 use std::collections::HashMap;
 
 use hyper::body;
 use hyper::http::response::Builder;
 use hyper::{Body, Method, Request, Response};
-use tokio::sync::mpsc::channel;
 
-use super::state::SessionId;
-use super::state::{Channel, Msg, MsgData, MsgResp};
-use super::ServerError;
-use serialization::{AuthenticatedReq, ConfigReq, MoveReq, Req, Resp};
+use crate::common;
+use crate::session;
+use crate::state::{AuthenticatedMsg, Channel, Msg, Reply, State};
 
-pub type DispatchResult = Result<Response<Body>, ServerError>;
+use serialization::{Authenticated, Config, Move, Req, Resp};
+
+pub type DispatchResult = Result<Response<Body>, common::Error>;
 
 pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
     match (req.method(), req.uri().path()) {
@@ -42,29 +38,27 @@ pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
 }
 
 async fn dispatch_events(mut ch: Channel, req: Request<Body>) -> DispatchResult {
-    if let Some(query) = req.uri().query() {
-        let queries: HashMap<&str, &str> = query
-            .split('&')
-            .map(|q| {
-                let mut it = q.splitn(2, '=');
-                let k = it.next().unwrap_or("");
-                let v = it.next().unwrap_or("");
-                (k, v)
-            })
-            .collect();
+    if let Some(queries) = get_queries(req.uri()) {
         if let Some(&session_id) = queries.get("session_id") {
-            let resp = msg(&mut ch, MsgData::Subscribe(session_id.to_owned().into())).await;
+            let resp = State::msg(
+                &mut ch,
+                Msg::Subscribe {
+                    session_id: session_id.to_owned(),
+                },
+            )
+            .await;
             match resp {
-                Some(MsgResp::Subscribed(rx)) => {
+                Some(Reply::Subscribe { rx }) => {
                     Ok(event_stream_builder().body(Body::wrap_stream(rx))?)
                 }
+                Some(Reply::Failure) => bad_request(),
                 _ => internal_server_error(),
             }
         } else {
-            not_found()
+            bad_request()
         }
     } else {
-        not_found()
+        bad_request()
     }
 }
 
@@ -72,19 +66,29 @@ async fn dispatch_api(ch: Channel, body: Body) -> DispatchResult {
     let buf = body::to_bytes(body).await?;
     if let Ok(req) = serde_json::from_slice::<Req>(&buf) {
         match req {
+            Req::Authenticated { auth_token, data } => {
+                dispatch_authenticated(ch, auth_token, data).await
+            }
             Req::Connect {
-                sessionId,
-                userName,
-            } => dispatch_connect(ch, sessionId, userName).await,
-            Req::Create { userName } => dispatch_create(ch, userName).await,
-            Req::Authenticated {
-                userId,
-                authToken,
-                req,
-            } => dispatch_authenticated(ch, userId, authToken, req).await,
+                session_id,
+                user_name,
+            } => dispatch_connect(ch, session_id, user_name).await,
+            Req::Create { user_name } => dispatch_create(ch, user_name).await,
         }
     } else {
         bad_request()
+    }
+}
+
+async fn dispatch_authenticated(
+    ch: Channel,
+    auth_token: String,
+    data: Authenticated,
+) -> DispatchResult {
+    match data {
+        Authenticated::Config { data } => dispatch_authenticated_config(ch, auth_token, data).await,
+        Authenticated::Move { data } => dispatch_authenticated_move(ch, auth_token, data).await,
+        Authenticated::Reconnect => dispatch_authenticated_reconnect(ch, auth_token).await,
     }
 }
 
@@ -93,139 +97,210 @@ async fn dispatch_connect(
     session_id: String,
     user_name: String,
 ) -> DispatchResult {
-    if !validate_user_name(&user_name) {
-        return bad_request();
-    }
-    let resp = msg(&mut ch, MsgData::Connect(session_id.into(), user_name)).await;
+    let resp = State::msg(
+        &mut ch,
+        Msg::Connect {
+            session_id,
+            user_name,
+        },
+    )
+    .await;
     match resp {
-        Some(MsgResp::Connected(uid, tok)) => Ok(json_builder().body(
-            Resp::Connected {
-                userId: uid.into(),
-                authToken: tok.into(),
-            }
-            .into(),
-        )?),
-        Some(MsgResp::ConnectFailure) => not_found(),
+        Some(Reply::Connect {
+            user_id,
+            auth_token,
+        }) => Resp::Connected {
+            user_id,
+            auth_token,
+        }
+        .into(),
+        Some(Reply::Failure) => bad_request(),
         _ => internal_server_error(),
     }
 }
 
 async fn dispatch_create(mut ch: Channel, user_name: String) -> DispatchResult {
-    if !validate_user_name(&user_name) {
-        return bad_request();
-    }
-    let resp = msg(&mut ch, MsgData::Create(user_name)).await;
-    if let Some(MsgResp::Created(sid, uid, tok)) = resp {
-        Ok(json_builder().body(
-            Resp::Created {
-                sessionId: sid.into(),
-                userId: uid.into(),
-                authToken: tok.into(),
-            }
-            .into(),
-        )?)
-    } else {
-        internal_server_error()
+    let resp = State::msg(&mut ch, Msg::Create { user_name }).await;
+    match resp {
+        Some(Reply::Create { auth_token }) => Resp::Created { auth_token }.into(),
+        Some(Reply::Failure) => bad_request(),
+        _ => internal_server_error(),
     }
 }
 
-async fn dispatch_authenticated(
-    mut ch: Channel,
-    user_id: String,
+async fn dispatch_authenticated_config(
+    ch: Channel,
     auth_token: String,
-    req: AuthenticatedReq,
+    data: Config,
 ) -> DispatchResult {
-    let resp = msg(
+    match data {
+        Config::Participants { participants } => {
+            dispatch_authenticated_config_participants(ch, auth_token, participants).await
+        }
+        Config::Start => dispatch_authenticated_config_start(ch, auth_token).await,
+    }
+}
+
+async fn dispatch_authenticated_move(
+    ch: Channel,
+    auth_token: String,
+    data: Move,
+) -> DispatchResult {
+    match data {
+        Move::Deploy { piece, pos } => {
+            dispatch_authenticated_move_deploy(ch, auth_token, piece, pos).await
+        }
+        Move::Move { change } => dispatch_authenticated_move_move(ch, auth_token, change).await,
+    }
+}
+
+async fn dispatch_authenticated_reconnect(mut ch: Channel, auth_token: String) -> DispatchResult {
+    let resp = State::msg(
         &mut ch,
-        MsgData::Authenticate(user_id.clone().into(), auth_token.clone().into()),
+        Msg::Authenticated {
+            auth_token,
+            msg: AuthenticatedMsg::Reconnect,
+        },
     )
     .await;
     match resp {
-        Some(MsgResp::Authenticated(sid)) => match req {
-            AuthenticatedReq::Config { req } => dispatch_config(ch, sid, user_id, req).await,
-            AuthenticatedReq::Move { req } => dispatch_move(ch, sid, user_id, req).await,
-            AuthenticatedReq::Reconnect => dispatch_reconnect(ch, sid, user_id).await,
-        },
-        Some(MsgResp::AuthenticateFailure) => unauthorized(),
-        _ => internal_server_error(),
-    }
-}
-
-async fn dispatch_config(
-    mut ch: Channel,
-    session_id: SessionId,
-    user_id: String,
-    req: ConfigReq,
-) -> DispatchResult {
-    let data = match req {
-        ConfigReq::Participants { participants } => MsgData::ChangeParticipants(
+        Some(Reply::Reconnect {
             session_id,
-            user_id.into(),
-            participants.iter().map(|p| p.clone().into()).collect(),
-        ),
-        ConfigReq::Start => MsgData::Start(session_id, user_id.into()),
-    };
-    let resp = msg(&mut ch, data).await;
-    match resp {
-        Some(MsgResp::ChangedParticipants) => ok(),
-        Some(MsgResp::ChangeParticipantsFailure) => unauthorized(),
-        Some(MsgResp::Started) => ok(),
-        Some(MsgResp::StartFailure) => unauthorized(),
+            user_id,
+            user_name,
+        }) => Resp::Reconnected {
+            session_id,
+            user_id,
+            user_name,
+        }
+        .into(),
+        Some(Reply::Failure) => bad_request(),
         _ => internal_server_error(),
     }
 }
 
-async fn dispatch_move(
+async fn dispatch_authenticated_config_participants(
     mut ch: Channel,
-    session_id: SessionId,
-    user_id: String,
-    req: MoveReq,
+    auth_token: String,
+    participants: Vec<String>,
 ) -> DispatchResult {
-    let data = match req {
-        MoveReq::Deploy { piece, pos } => MsgData::Deploy(session_id, user_id.into(), piece, pos),
-        MoveReq::Move { change } => MsgData::Move(session_id, user_id.into(), change),
-    };
-    let resp = msg(&mut ch, data).await;
+    let resp = State::msg(
+        &mut ch,
+        Msg::Authenticated {
+            auth_token: auth_token.clone(),
+            msg: AuthenticatedMsg::Relay {
+                msg: session::Msg::Authorized {
+                    auth_token,
+                    msg: session::AuthorizedMsg::SetParticipants {
+                        user_ids: participants,
+                    },
+                },
+            },
+        },
+    )
+    .await;
     match resp {
-        Some(MsgResp::Moved) => ok(),
-        Some(MsgResp::MoveFailure) => unauthorized(),
+        Some(Reply::Success) => ok(),
+        Some(Reply::Relay {
+            reply: session::Reply::Failure,
+        }) => bad_request(),
         _ => internal_server_error(),
     }
 }
 
-async fn dispatch_reconnect(
+async fn dispatch_authenticated_config_start(
     mut ch: Channel,
-    session_id: SessionId,
-    user_id: String,
+    auth_token: String,
 ) -> DispatchResult {
-    let resp = msg(&mut ch, MsgData::Reconnect(session_id, user_id.into())).await;
+    let resp = State::msg(
+        &mut ch,
+        Msg::Authenticated {
+            auth_token: auth_token.clone(),
+            msg: AuthenticatedMsg::Relay {
+                msg: session::Msg::Authorized {
+                    auth_token,
+                    msg: session::AuthorizedMsg::Start,
+                },
+            },
+        },
+    )
+    .await;
     match resp {
-        Some(MsgResp::Reconnected(sid, n)) => Ok(json_builder().body(
-            Resp::Reconnected {
-                sessionId: sid.into(),
-                userName: n,
-            }
-            .into(),
-        )?),
-        Some(MsgResp::ReconnectFailure) => unauthorized(),
+        Some(Reply::Success) => ok(),
+        Some(Reply::Relay {
+            reply: session::Reply::Failure,
+        }) => bad_request(),
+        _ => internal_server_error(),
+    }
+}
+
+async fn dispatch_authenticated_move_deploy(
+    mut ch: Channel,
+    auth_token: String,
+    piece: String,
+    pos: String,
+) -> DispatchResult {
+    let resp = State::msg(
+        &mut ch,
+        Msg::Authenticated {
+            auth_token: auth_token.clone(),
+            msg: AuthenticatedMsg::Relay {
+                msg: session::Msg::DeployPiece {
+                    auth_token,
+                    piece,
+                    pos,
+                },
+            },
+        },
+    )
+    .await;
+    match resp {
+        Some(Reply::Success) => ok(),
+        Some(Reply::Relay {
+            reply: session::Reply::Failure,
+        }) => bad_request(),
+        _ => internal_server_error(),
+    }
+}
+
+async fn dispatch_authenticated_move_move(
+    mut ch: Channel,
+    auth_token: String,
+    change: String,
+) -> DispatchResult {
+    let resp = State::msg(
+        &mut ch,
+        Msg::Authenticated {
+            auth_token: auth_token.clone(),
+            msg: AuthenticatedMsg::Relay {
+                msg: session::Msg::MovePiece { auth_token, change },
+            },
+        },
+    )
+    .await;
+    match resp {
+        Some(Reply::Success) => ok(),
+        Some(Reply::Relay {
+            reply: session::Reply::Failure,
+        }) => bad_request(),
         _ => internal_server_error(),
     }
 }
 
 // Helper functions
 
-async fn msg(ch: &mut Channel, data: MsgData) -> Option<MsgResp> {
-    let (tx, mut rx) = channel::<MsgResp>(1);
-    let msg = Msg {
-        data: data,
-        resp_channel: tx,
-    };
-    ch.send(msg).ok()?;
-    rx.recv().await
-}
-
-fn validate_user_name(name: &String) -> bool {
-    !name.is_empty() && name.chars().all(|c| c.is_alphabetic() || c.is_whitespace())
+fn get_queries(uri: &hyper::Uri) -> Option<HashMap<&str, &str>> {
+    Some(
+        uri.query()?
+            .split('&')
+            .map(|q| {
+                let mut it = q.splitn(2, '=');
+                let k = it.next().unwrap_or("");
+                let v = it.next().unwrap_or("");
+                (k, v)
+            })
+            .collect(),
+    )
 }
 
 // TODO: Don't set Access-Control-Allow-Origin to *
