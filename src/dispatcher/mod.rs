@@ -18,8 +18,8 @@ mod serialization;
 use std::collections::HashMap;
 
 use hyper::body;
-use hyper::http::response::Builder;
-use hyper::{Body, Method, Request, Response};
+use hyper::http::response;
+use hyper::{Body, Method, Request, Response, StatusCode};
 
 use crate::common;
 use crate::state::StateActor;
@@ -190,36 +190,44 @@ fn get_queries(uri: &hyper::Uri) -> Option<HashMap<&str, &str>> {
 }
 
 // TODO: Don't set Access-Control-Allow-Origin to *
-fn builder() -> Builder {
+fn builder() -> response::Builder {
     Response::builder().header("Access-Control-Allow-Origin", "*")
 }
 
-fn event_stream_builder() -> Builder {
+fn event_stream_builder() -> response::Builder {
     builder()
         .header("Connection", "keep-alive")
         .header("Content-Type", "text/event-stream")
 }
 
-fn json_builder() -> Builder {
+fn json_builder() -> response::Builder {
     builder().header("Content-Type", "application/json; charset=UTF-8")
 }
 
 fn ok() -> DispatchResult {
-    Ok(builder().status(200).body(Body::empty())?)
+    Ok(builder().status(StatusCode::OK).body(Body::empty())?)
 }
 
 fn bad_request() -> DispatchResult {
-    Ok(builder().status(400).body(Body::empty())?)
+    Ok(builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body(Body::empty())?)
 }
 
 fn unauthorized() -> DispatchResult {
-    Ok(builder().status(401).body(Body::empty())?)
+    Ok(builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(Body::empty())?)
 }
 
 fn not_found() -> DispatchResult {
-    Ok(builder().status(404).body(Body::empty())?)
+    Ok(builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(Body::empty())?)
 }
 
 fn internal_server_error() -> DispatchResult {
-    Ok(builder().status(500).body(Body::empty())?)
+    Ok(builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::empty())?)
 }
