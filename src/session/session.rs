@@ -142,7 +142,7 @@ impl Session {
     async fn handle_notify_all(&mut self) -> Option<()> {
         let ev: serialization::Event = self.into();
         let ev = serde_json::to_string(&ev).ok()?;
-        let res = self.tx.send(format!("data: {}", ev));
+        let res = self.tx.send(format!("data: {}\n\n", ev));
         if res.is_ok() {
             self.failed_broadcasts = 0;
         }
