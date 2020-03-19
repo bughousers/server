@@ -17,9 +17,8 @@ mod serialization;
 
 use std::collections::HashMap;
 
-use hyper::body;
 use hyper::http::response;
-use hyper::{Body, Method, Request, Response, StatusCode};
+use hyper::{body, header, Body, Method, Request, Response, StatusCode};
 
 use crate::common;
 use crate::state::StateActor;
@@ -191,17 +190,17 @@ fn get_queries(uri: &hyper::Uri) -> Option<HashMap<&str, &str>> {
 
 // TODO: Don't set Access-Control-Allow-Origin to *
 fn builder() -> response::Builder {
-    Response::builder().header("Access-Control-Allow-Origin", "*")
+    Response::builder().header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
 }
 
 fn event_stream_builder() -> response::Builder {
     builder()
-        .header("Connection", "keep-alive")
-        .header("Content-Type", "text/event-stream")
+        .header(header::CONNECTION, "keep-alive")
+        .header(header::CONTENT_TYPE, "text/event-stream")
 }
 
 fn json_builder() -> response::Builder {
-    builder().header("Content-Type", "application/json; charset=UTF-8")
+    builder().header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
 }
 
 fn ok() -> DispatchResult {
