@@ -21,6 +21,7 @@ use tokio::sync::broadcast;
 use crate::common::{AuthToken, User, UserId, UserStatus};
 
 use super::messages::{Message, ResponseSender};
+use super::serialization;
 use super::utils;
 
 pub struct Session {
@@ -54,6 +55,9 @@ impl Session {
         pos: String,
         tx: ResponseSender<()>,
     ) -> Option<()> {
+        if !self.started {
+            return None;
+        }
         let user_id = self.user_ids.get(&auth_token)?;
         let user = self.users.get(user_id)?;
         if let UserStatus::Active(b1, w) = user.status {
@@ -62,7 +66,8 @@ impl Session {
                 .logic
                 .deploy_piece(b1, w, utils::parse_piece(&piece)?, row, col);
             if success {
-                tx.send(());
+                self.handle_notify_all().await;
+                let _ = tx.send(());
             }
         }
         Some(())
@@ -87,6 +92,7 @@ impl Session {
     async fn handle_insert_user(&mut self, user_id: UserId, user: User) -> Option<()> {
         if utils::validate_user_name(&user.name) {
             self.users.insert(user_id, user);
+            self.handle_notify_all().await;
         }
         Some(())
     }
@@ -111,6 +117,9 @@ impl Session {
         change: String,
         tx: ResponseSender<()>,
     ) -> Option<()> {
+        if !self.started {
+            return None;
+        }
         let user_id = self.user_ids.get(&auth_token)?;
         let user = self.users.get(user_id)?;
         if let UserStatus::Active(b1, w) = user.status {
@@ -122,6 +131,7 @@ impl Session {
             if is_whites_turn == w {
                 let [i, j, i_new, j_new] = utils::parse_change(&change);
                 if self.logic.movemaker(b1, i, j, i_new, j_new) {
+                    self.handle_notify_all().await;
                     let _ = tx.send(());
                 }
             }
@@ -130,6 +140,12 @@ impl Session {
     }
 
     async fn handle_notify_all(&mut self) -> Option<()> {
+        let ev: serialization::Event = self.into();
+        let ev = serde_json::to_string(&ev).ok()?;
+        let res = self.tx.send(format!("data: {}", ev));
+        if res.is_ok() {
+            self.failed_broadcasts = 0;
+        }
         Some(())
     }
 
@@ -147,6 +163,7 @@ impl Session {
             for uid in participants {
                 self.users.get_mut(&uid)?.status = UserStatus::Inactive;
             }
+            self.handle_notify_all().await;
             let _ = tx.send(());
         }
         Some(())
@@ -159,6 +176,7 @@ impl Session {
             && self.users.values().filter(|&u| u.is_participant()).count() >= 4
         {
             self.started = true;
+            self.handle_notify_all().await;
             let _ = tx.send(());
         }
         Some(())
@@ -182,11 +200,11 @@ impl Session {
             Message::InsertUser(uid, u) => self.handle_insert_user(uid, u).await,
             Message::InsertUserId(tok, uid) => self.handle_insert_user_id(tok, uid).await,
             Message::IsAlive(tx) => self.handle_is_alive(tx).await,
+            Message::MovePiece(tok, c, tx) => self.handle_move_piece(tok, c, tx).await,
             Message::NotifyAll => self.handle_notify_all().await,
             Message::SetParticipants(tok, p, tx) => self.handle_set_participants(tok, p, tx).await,
             Message::Start(tok, tx) => self.handle_start(tok, tx).await,
             Message::Subscribe(tx) => self.handle_subscribe(tx).await,
-            _ => None,
         };
     }
 }

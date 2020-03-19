@@ -24,7 +24,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::Server;
 
 use dispatcher::dispatch;
-use state::State;
+use state::StateActor;
 
 pub type ServerError = Box<dyn Error + Send + Sync>;
 
@@ -32,10 +32,18 @@ const LISTEN_ADDR: &'static str = "0.0.0.0:8080";
 
 #[tokio::main]
 async fn main() -> Result<(), ServerError> {
-    let tx = State::new().serve();
+    let state = StateActor::new();
+    let state_copy = state.clone();
+    tokio::spawn(async move {
+        let mut state = state_copy;
+        loop {
+            tokio::time::delay_for(std::time::Duration::from_secs(900)).await;
+            state.garbage_collect().await;
+        }
+    });
     let make_svc = make_service_fn(|_| {
-        let tx = tx.clone();
-        async { Ok::<_, ServerError>(service_fn(move |req| dispatch(tx.clone(), req))) }
+        let state = state.clone();
+        async { Ok::<_, ServerError>(service_fn(move |req| dispatch(state.clone(), req))) }
     });
     Server::bind(&LISTEN_ADDR.parse()?).serve(make_svc).await?;
     Ok(())

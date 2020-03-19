@@ -22,37 +22,27 @@ use hyper::http::response::Builder;
 use hyper::{Body, Method, Request, Response};
 
 use crate::common;
-use crate::session;
-use crate::state::{AuthenticatedMsg, Channel, Msg, Reply, State};
+use crate::state::StateActor;
 
-use serialization::{Authenticated, Config, Move, Req, Resp};
+use serialization::{Req, Resp};
 
 pub type DispatchResult = Result<Response<Body>, common::Error>;
 
-pub async fn dispatch(ch: Channel, req: Request<Body>) -> DispatchResult {
+pub async fn dispatch(state: StateActor, req: Request<Body>) -> DispatchResult {
     match (req.method(), req.uri().path()) {
-        (&Method::GET, "/events") => dispatch_events(ch, req).await,
-        (&Method::POST, "/api") => dispatch_api(ch, req.into_body()).await,
+        (&Method::GET, "/events") => dispatch_events(state, req).await,
+        (&Method::POST, "/api") => dispatch_api(state, req.into_body()).await,
         _ => not_found(),
     }
 }
 
-async fn dispatch_events(mut ch: Channel, req: Request<Body>) -> DispatchResult {
+async fn dispatch_events(mut state: StateActor, req: Request<Body>) -> DispatchResult {
     if let Some(queries) = get_queries(req.uri()) {
         if let Some(&session_id) = queries.get("session_id") {
-            let resp = State::msg(
-                &mut ch,
-                Msg::Subscribe {
-                    session_id: session_id.to_owned(),
-                },
-            )
-            .await;
+            let resp = state.subscribe(session_id.to_owned()).await;
             match resp {
-                Some(Reply::Subscribe { rx }) => {
-                    Ok(event_stream_builder().body(Body::wrap_stream(rx))?)
-                }
-                Some(Reply::Failure) => bad_request(),
-                _ => internal_server_error(),
+                Some(rx) => Ok(event_stream_builder().body(Body::wrap_stream(rx))?),
+                _ => bad_request(),
             }
         } else {
             bad_request()
@@ -62,228 +52,124 @@ async fn dispatch_events(mut ch: Channel, req: Request<Body>) -> DispatchResult 
     }
 }
 
-async fn dispatch_api(ch: Channel, body: Body) -> DispatchResult {
+async fn dispatch_api(state: StateActor, body: Body) -> DispatchResult {
     let buf = body::to_bytes(body).await?;
     if let Ok(req) = serde_json::from_slice::<Req>(&buf) {
         match req {
-            Req::Authenticated { auth_token, data } => {
-                dispatch_authenticated(ch, auth_token, data).await
-            }
             Req::Connect {
                 session_id,
                 user_name,
-            } => dispatch_connect(ch, session_id, user_name).await,
-            Req::Create { user_name } => dispatch_create(ch, user_name).await,
+            } => dispatch_connect(state, session_id, user_name).await,
+            Req::Create { user_name } => dispatch_create(state, user_name).await,
+            Req::DeployPiece {
+                auth_token,
+                piece,
+                pos,
+            } => dispatch_authenticated_move_deploy(state, auth_token, piece, pos).await,
+            Req::MovePiece { auth_token, change } => {
+                dispatch_authenticated_move_move(state, auth_token, change).await
+            }
+            Req::Reconnect { auth_token } => {
+                dispatch_authenticated_reconnect(state, auth_token).await
+            }
+            Req::SetParticipants {
+                auth_token,
+                participants,
+            } => dispatch_authenticated_config_participants(state, auth_token, participants).await,
+            Req::Start { auth_token } => {
+                dispatch_authenticated_config_start(state, auth_token).await
+            }
         }
     } else {
         bad_request()
     }
 }
 
-async fn dispatch_authenticated(
-    ch: Channel,
-    auth_token: String,
-    data: Authenticated,
-) -> DispatchResult {
-    match data {
-        Authenticated::Config { data } => dispatch_authenticated_config(ch, auth_token, data).await,
-        Authenticated::Move { data } => dispatch_authenticated_move(ch, auth_token, data).await,
-        Authenticated::Reconnect => dispatch_authenticated_reconnect(ch, auth_token).await,
-    }
-}
-
 async fn dispatch_connect(
-    mut ch: Channel,
+    mut state: StateActor,
     session_id: String,
     user_name: String,
 ) -> DispatchResult {
-    let resp = State::msg(
-        &mut ch,
-        Msg::Connect {
-            session_id,
-            user_name,
-        },
-    )
-    .await;
+    let resp = state.connect(session_id, user_name).await;
     match resp {
-        Some(Reply::Connect {
-            user_id,
-            auth_token,
-        }) => Resp::Connected {
+        Some((user_id, auth_token)) => Resp::Connected {
             user_id,
             auth_token,
         }
         .into(),
-        Some(Reply::Failure) => bad_request(),
-        _ => internal_server_error(),
+        _ => bad_request(),
     }
 }
 
-async fn dispatch_create(mut ch: Channel, user_name: String) -> DispatchResult {
-    let resp = State::msg(&mut ch, Msg::Create { user_name }).await;
+async fn dispatch_create(mut state: StateActor, user_name: String) -> DispatchResult {
+    let resp = state.create(user_name).await;
     match resp {
-        Some(Reply::Create { auth_token }) => Resp::Created { auth_token }.into(),
-        Some(Reply::Failure) => bad_request(),
-        _ => internal_server_error(),
+        Some(auth_token) => Resp::Created { auth_token }.into(),
+        _ => bad_request(),
     }
 }
 
-async fn dispatch_authenticated_config(
-    ch: Channel,
+async fn dispatch_authenticated_reconnect(
+    mut state: StateActor,
     auth_token: String,
-    data: Config,
 ) -> DispatchResult {
-    match data {
-        Config::Participants { participants } => {
-            dispatch_authenticated_config_participants(ch, auth_token, participants).await
-        }
-        Config::Start => dispatch_authenticated_config_start(ch, auth_token).await,
-    }
-}
-
-async fn dispatch_authenticated_move(
-    ch: Channel,
-    auth_token: String,
-    data: Move,
-) -> DispatchResult {
-    match data {
-        Move::Deploy { piece, pos } => {
-            dispatch_authenticated_move_deploy(ch, auth_token, piece, pos).await
-        }
-        Move::Move { change } => dispatch_authenticated_move_move(ch, auth_token, change).await,
-    }
-}
-
-async fn dispatch_authenticated_reconnect(mut ch: Channel, auth_token: String) -> DispatchResult {
-    let resp = State::msg(
-        &mut ch,
-        Msg::Authenticated {
-            auth_token,
-            msg: AuthenticatedMsg::Reconnect,
-        },
-    )
-    .await;
+    let resp = state.reconnect(auth_token).await;
     match resp {
-        Some(Reply::Reconnect {
-            session_id,
-            user_id,
-            user_name,
-        }) => Resp::Reconnected {
+        Some((session_id, user_id, user_name)) => Resp::Reconnected {
             session_id,
             user_id,
             user_name,
         }
         .into(),
-        Some(Reply::Failure) => bad_request(),
-        _ => internal_server_error(),
+        _ => bad_request(),
     }
 }
 
 async fn dispatch_authenticated_config_participants(
-    mut ch: Channel,
+    mut state: StateActor,
     auth_token: String,
     participants: Vec<String>,
 ) -> DispatchResult {
-    let resp = State::msg(
-        &mut ch,
-        Msg::Authenticated {
-            auth_token: auth_token.clone(),
-            msg: AuthenticatedMsg::Relay {
-                msg: session::Msg::Authorized {
-                    auth_token,
-                    msg: session::AuthorizedMsg::SetParticipants {
-                        user_ids: participants,
-                    },
-                },
-            },
-        },
-    )
-    .await;
+    let resp = state.set_participants(auth_token, participants).await;
     match resp {
-        Some(Reply::Success) => ok(),
-        Some(Reply::Relay {
-            reply: session::Reply::Failure,
-        }) => bad_request(),
-        _ => internal_server_error(),
+        Some(()) => ok(),
+        _ => bad_request(),
     }
 }
 
 async fn dispatch_authenticated_config_start(
-    mut ch: Channel,
+    mut state: StateActor,
     auth_token: String,
 ) -> DispatchResult {
-    let resp = State::msg(
-        &mut ch,
-        Msg::Authenticated {
-            auth_token: auth_token.clone(),
-            msg: AuthenticatedMsg::Relay {
-                msg: session::Msg::Authorized {
-                    auth_token,
-                    msg: session::AuthorizedMsg::Start,
-                },
-            },
-        },
-    )
-    .await;
+    let resp = state.start(auth_token).await;
     match resp {
-        Some(Reply::Success) => ok(),
-        Some(Reply::Relay {
-            reply: session::Reply::Failure,
-        }) => bad_request(),
-        _ => internal_server_error(),
+        Some(()) => ok(),
+        _ => bad_request(),
     }
 }
 
 async fn dispatch_authenticated_move_deploy(
-    mut ch: Channel,
+    mut state: StateActor,
     auth_token: String,
     piece: String,
     pos: String,
 ) -> DispatchResult {
-    let resp = State::msg(
-        &mut ch,
-        Msg::Authenticated {
-            auth_token: auth_token.clone(),
-            msg: AuthenticatedMsg::Relay {
-                msg: session::Msg::DeployPiece {
-                    auth_token,
-                    piece,
-                    pos,
-                },
-            },
-        },
-    )
-    .await;
+    let resp = state.deploy_piece(auth_token, piece, pos).await;
     match resp {
-        Some(Reply::Success) => ok(),
-        Some(Reply::Relay {
-            reply: session::Reply::Failure,
-        }) => bad_request(),
-        _ => internal_server_error(),
+        Some(()) => ok(),
+        _ => bad_request(),
     }
 }
 
 async fn dispatch_authenticated_move_move(
-    mut ch: Channel,
+    mut state: StateActor,
     auth_token: String,
     change: String,
 ) -> DispatchResult {
-    let resp = State::msg(
-        &mut ch,
-        Msg::Authenticated {
-            auth_token: auth_token.clone(),
-            msg: AuthenticatedMsg::Relay {
-                msg: session::Msg::MovePiece { auth_token, change },
-            },
-        },
-    )
-    .await;
+    let resp = state.move_piece(auth_token, change).await;
     match resp {
-        Some(Reply::Success) => ok(),
-        Some(Reply::Relay {
-            reply: session::Reply::Failure,
-        }) => bad_request(),
-        _ => internal_server_error(),
+        Some(()) => ok(),
+        _ => bad_request(),
     }
 }
 

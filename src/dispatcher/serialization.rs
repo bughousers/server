@@ -24,49 +24,29 @@ use super::{json_builder, DispatchResult};
 #[serde(tag = "type")]
 pub enum Req {
     #[serde(rename_all = "camelCase")]
-    Authenticated {
-        auth_token: String,
-        data: Authenticated,
-    },
-    #[serde(rename_all = "camelCase")]
     Connect {
         session_id: String,
         user_name: String,
     },
     #[serde(rename_all = "camelCase")]
     Create { user_name: String },
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(tag = "type")]
-pub enum Authenticated {
     #[serde(rename_all = "camelCase")]
-    Config { data: Config },
+    DeployPiece {
+        auth_token: String,
+        piece: String,
+        pos: String,
+    },
     #[serde(rename_all = "camelCase")]
-    Move { data: Move },
+    MovePiece { auth_token: String, change: String },
     #[serde(rename_all = "camelCase")]
-    Reconnect,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(tag = "type")]
-pub enum Config {
+    Reconnect { auth_token: String },
     #[serde(rename_all = "camelCase")]
-    Participants { participants: Vec<String> },
+    SetParticipants {
+        auth_token: String,
+        participants: Vec<String>,
+    },
     #[serde(rename_all = "camelCase")]
-    Start,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(tag = "type")]
-pub enum Move {
-    #[serde(rename_all = "camelCase")]
-    Deploy { piece: String, pos: String },
-    #[serde(rename_all = "camelCase")]
-    Move { change: String },
+    Start { auth_token: String },
 }
 
 // Response types

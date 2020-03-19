@@ -15,17 +15,17 @@
 
 use std::collections::HashMap;
 
-use tokio::spawn;
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::*;
 
-use super::misc::{AuthToken, SessionId, UserId};
-use super::session::Session;
+use crate::common::{AuthToken, SessionId, User, UserId};
+use crate::session::SessionActor;
+
+use super::messages::{Message, ResponseSender};
+use super::utils;
 
 pub struct State {
-    sessions: HashMap<SessionId, Session>,
-    session_ids: HashMap<UserId, SessionId>,
-    auth_tokens: HashMap<UserId, AuthToken>,
+    pub sessions: HashMap<SessionId, SessionActor>,
+    pub session_ids: HashMap<AuthToken, SessionId>,
 }
 
 impl State {
@@ -33,275 +33,157 @@ impl State {
         Self {
             sessions: HashMap::new(),
             session_ids: HashMap::new(),
-            auth_tokens: HashMap::new(),
         }
     }
 
-    pub fn serve(mut self) -> Channel {
-        let (tx, mut rx) = unbounded_channel::<Msg>();
-        spawn(async move {
-            loop {
-                let msg = rx.recv().await;
-                if let Some(msg) = msg {
-                    handle(&mut self, msg).await;
-                }
+    async fn handle_connect(
+        &mut self,
+        session_id: SessionId,
+        user_name: String,
+        tx: ResponseSender<(UserId, AuthToken)>,
+    ) -> Option<()> {
+        let user_id = utils::rand_user_id();
+        let auth_token = utils::rand_auth_token();
+        let session = self.sessions.get_mut(&session_id)?;
+        session
+            .insert_user(user_id.clone(), User::new(user_name))
+            .await;
+        session
+            .insert_user_id(auth_token.clone(), user_id.clone())
+            .await;
+        self.session_ids.insert(auth_token.clone(), session_id);
+        let _ = tx.send((user_id, auth_token));
+        Some(())
+    }
+
+    async fn handle_create(
+        &mut self,
+        user_name: String,
+        tx: ResponseSender<AuthToken>,
+    ) -> Option<()> {
+        let session_id = utils::rand_session_id();
+        let user_id = utils::rand_user_id();
+        let auth_token = utils::rand_auth_token();
+        let mut session = SessionActor::new(user_id.clone());
+        session
+            .insert_user(user_id.clone(), User::new(user_name))
+            .await;
+        session.insert_user_id(auth_token.clone(), user_id).await;
+        self.sessions.insert(session_id.clone(), session);
+        self.session_ids.insert(auth_token.clone(), session_id);
+        let _ = tx.send(auth_token);
+        Some(())
+    }
+
+    async fn handle_deploy_piece(
+        &mut self,
+        auth_token: AuthToken,
+        piece: String,
+        pos: String,
+        tx: ResponseSender<()>,
+    ) -> Option<()> {
+        let session_id = self.session_ids.get(&auth_token)?;
+        let session = self.sessions.get_mut(session_id)?;
+        if session.deploy_piece(auth_token, piece, pos).await.is_some() {
+            let _ = tx.send(());
+        }
+        Some(())
+    }
+
+    async fn handle_garbage_collect(&mut self) -> Option<()> {
+        // Mark
+        let mut marked = Vec::new();
+        for (sid, s) in self.sessions.iter_mut() {
+            let is_alive = s.is_alive().await;
+            if is_alive.unwrap_or(false) {
+                marked.push(sid.to_owned());
             }
-        });
-        tx
+        }
+        // Sweep
+        self.session_ids = self
+            .session_ids
+            .iter()
+            .filter(|(_, sid)| !marked.contains(sid))
+            .map(|(tok, sid)| (tok.to_owned(), sid.to_owned()))
+            .collect();
+        for sid in marked {
+            self.sessions.remove(&sid);
+        }
+        Some(())
     }
-}
 
-pub type Channel = UnboundedSender<Msg>;
-pub type RespChannel = Sender<MsgResp>;
-
-pub struct Msg {
-    pub data: MsgData,
-    pub resp_channel: RespChannel,
-}
-
-pub enum MsgData {
-    Authenticate(UserId, AuthToken),
-    ChangeParticipants(SessionId, UserId, Vec<UserId>),
-    Connect(SessionId, String),
-    Create(String),
-    Deploy(SessionId, UserId, String, String),
-    Move(SessionId, UserId, String),
-    Reconnect(SessionId, UserId),
-    Start(SessionId, UserId),
-    Subscribe(SessionId),
-}
-
-pub enum MsgResp {
-    Authenticated(SessionId),
-    AuthenticateFailure,
-    ChangedParticipants,
-    ChangeParticipantsFailure,
-    Connected(UserId, AuthToken),
-    ConnectFailure,
-    Created(SessionId, UserId, AuthToken),
-    Deployed,
-    DeployFailure,
-    Moved,
-    MoveFailure,
-    Reconnected(SessionId, String),
-    ReconnectFailure,
-    Started,
-    StartFailure,
-    Subscribed(broadcast::Receiver<String>),
-    SubscribeFailure,
-}
-
-async fn handle(state: &mut State, msg: Msg) -> Option<()> {
-    match msg.data {
-        MsgData::Authenticate(uid, tok) => {
-            handle_authenticate(state, msg.resp_channel, uid, tok).await
+    async fn handle_move_piece(
+        &mut self,
+        auth_token: AuthToken,
+        change: String,
+        tx: ResponseSender<()>,
+    ) -> Option<()> {
+        let session_id = self.session_ids.get(&auth_token)?;
+        let session = self.sessions.get_mut(session_id)?;
+        if session.move_piece(auth_token, change).await.is_some() {
+            let _ = tx.send(());
         }
-        MsgData::ChangeParticipants(sid, uid, p) => {
-            handle_change_participants(state, msg.resp_channel, sid, uid, p).await
-        }
-        MsgData::Connect(sid, n) => handle_connect(state, msg.resp_channel, sid, n).await,
-        MsgData::Create(n) => handle_create(state, msg.resp_channel, n).await,
-        MsgData::Deploy(sid, uid, p, pos) => {
-            handle_deploy(state, msg.resp_channel, sid, uid, p, pos).await
-        }
-        MsgData::Move(sid, uid, c) => handle_move(state, msg.resp_channel, sid, uid, c).await,
-        MsgData::Reconnect(sid, uid) => handle_reconnect(state, msg.resp_channel, sid, uid).await,
-        MsgData::Start(sid, uid) => handle_start(state, msg.resp_channel, sid, uid).await,
-        MsgData::Subscribe(sid) => handle_subscribe(state, msg.resp_channel, sid).await,
+        Some(())
     }
-}
 
-// Handle Authenticate messages
+    async fn handle_reconnect(
+        &mut self,
+        auth_token: AuthToken,
+        tx: ResponseSender<(SessionId, UserId, String)>,
+    ) -> Option<()> {
+        let session_id = self.session_ids.get(&auth_token)?;
+        let session = self.sessions.get_mut(session_id)?;
+        let user_id = session.get_user_id(auth_token).await?;
+        let user = session.get_user(user_id.clone()).await?;
+        let _ = tx.send((session_id.to_owned(), user_id, user.name));
+        Some(())
+    }
 
-async fn handle_authenticate(
-    state: &mut State,
-    mut ch: RespChannel,
-    user_id: UserId,
-    auth_token: AuthToken,
-) -> Option<()> {
-    let msg_resp = if let Some(sid) = auth(state, &user_id, &auth_token) {
-        MsgResp::Authenticated(sid)
-    } else {
-        MsgResp::AuthenticateFailure
-    };
-    ch.send(msg_resp).await;
-    Some(())
-}
+    async fn handle_set_participants(
+        &mut self,
+        auth_token: AuthToken,
+        participants: Vec<UserId>,
+        tx: ResponseSender<()>,
+    ) -> Option<()> {
+        let session_id = self.session_ids.get(&auth_token)?;
+        let session = self.sessions.get_mut(session_id)?;
+        session.set_participants(auth_token, participants).await?;
+        let _ = tx.send(());
+        Some(())
+    }
 
-// Handle ChangeParticipants messages
+    async fn handle_start(&mut self, auth_token: AuthToken, tx: ResponseSender<()>) -> Option<()> {
+        let session_id = self.session_ids.get(&auth_token)?;
+        let session = self.sessions.get_mut(session_id)?;
+        session.start(auth_token).await?;
+        let _ = tx.send(());
+        Some(())
+    }
 
-async fn handle_change_participants(
-    state: &mut State,
-    mut ch: RespChannel,
-    session_id: SessionId,
-    user_id: UserId,
-    participants: Vec<UserId>,
-) -> Option<()> {
-    let session = state.sessions.get_mut(&session_id)?;
-    let msg_resp = if session.set_participants(&user_id, participants) {
-        session.notify_all();
-        MsgResp::ChangedParticipants
-    } else {
-        MsgResp::ChangeParticipantsFailure
-    };
-    ch.send(msg_resp).await;
-    Some(())
-}
+    async fn handle_subscribe(
+        &mut self,
+        session_id: SessionId,
+        tx: ResponseSender<broadcast::Receiver<String>>,
+    ) -> Option<()> {
+        let session = self.sessions.get_mut(&session_id)?;
+        let rx = session.subscribe().await?;
+        let _ = tx.send(rx);
+        Some(())
+    }
 
-// Handle Connect messages
-
-async fn handle_connect(
-    state: &mut State,
-    mut ch: RespChannel,
-    session_id: SessionId,
-    user_name: String,
-) -> Option<()> {
-    let resp = if let Some(session) = state.sessions.get_mut(&session_id) {
-        let user_id = UserId::new();
-        let auth_token = AuthToken::new();
-        session.set_user_name(user_id.clone(), user_name);
-        state.session_ids.insert(user_id.clone(), session_id);
-        state
-            .auth_tokens
-            .insert(user_id.clone(), auth_token.clone());
-        session.notify_all();
-        MsgResp::Connected(user_id, auth_token)
-    } else {
-        MsgResp::ConnectFailure
-    };
-    ch.send(resp).await;
-    Some(())
-}
-
-// Handle Create messages
-
-async fn handle_create(state: &mut State, mut ch: RespChannel, user_name: String) -> Option<()> {
-    let session_id = SessionId::new();
-    let user_id = UserId::new();
-    let auth_token = AuthToken::new();
-    let mut session = Session::new(user_id.clone());
-    session.set_user_name(user_id.clone(), user_name);
-    session.notify_all();
-    state.sessions.insert(session_id.clone(), session);
-    state
-        .session_ids
-        .insert(user_id.clone(), session_id.clone());
-    state
-        .auth_tokens
-        .insert(user_id.clone(), auth_token.clone());
-    ch.send(MsgResp::Created(session_id, user_id, auth_token))
-        .await;
-    Some(())
-}
-
-// Handle Deploy messages
-
-async fn handle_deploy(
-    state: &mut State,
-    mut ch: RespChannel,
-    session_id: SessionId,
-    user_id: UserId,
-    piece: String,
-    pos: String,
-) -> Option<()> {
-    let msg_resp = {
-        let session = state.sessions.get_mut(&session_id)?;
-        if session.deploy_piece(&user_id, piece, pos).is_some() {
-            session.notify_all();
-            MsgResp::Deployed
-        } else {
-            MsgResp::DeployFailure
-        }
-    };
-    ch.send(msg_resp).await;
-    Some(())
-}
-
-// Handle Move messages
-
-async fn handle_move(
-    state: &mut State,
-    mut ch: RespChannel,
-    session_id: SessionId,
-    user_id: UserId,
-    change: String,
-) -> Option<()> {
-    let msg_resp = {
-        let session = state.sessions.get_mut(&session_id)?;
-        if session.move_piece(&user_id, change) {
-            session.notify_all();
-            MsgResp::Moved
-        } else {
-            MsgResp::MoveFailure
-        }
-    };
-    ch.send(msg_resp).await;
-    Some(())
-}
-
-// Handle Reconnect messages
-
-async fn handle_reconnect(
-    state: &mut State,
-    mut ch: RespChannel,
-    session_id: SessionId,
-    user_id: UserId,
-) -> Option<()> {
-    let msg_resp = MsgResp::Reconnected(
-        session_id.clone(),
-        state
-            .sessions
-            .get(&session_id)?
-            .get_user_name(&user_id)?
-            .into(),
-    );
-    ch.send(msg_resp).await;
-    Some(())
-}
-
-// Handle Start messages
-
-async fn handle_start(
-    state: &mut State,
-    mut ch: RespChannel,
-    session_id: SessionId,
-    user_id: UserId,
-) -> Option<()> {
-    let msg_resp = {
-        let session = state.sessions.get_mut(&session_id)?;
-        if session.start(&user_id) {
-            session.notify_all();
-            MsgResp::Started
-        } else {
-            MsgResp::StartFailure
-        }
-    };
-    ch.send(msg_resp).await;
-    Some(())
-}
-
-// Handle Subscribe messages
-
-async fn handle_subscribe(
-    state: &mut State,
-    mut ch: RespChannel,
-    session_id: SessionId,
-) -> Option<()> {
-    let msg_resp = {
-        let rx = state.sessions.get_mut(&session_id)?.subscribe();
-        MsgResp::Subscribed(rx)
-    };
-    ch.send(msg_resp).await;
-    Some(())
-}
-
-// Helper functions
-
-fn auth(state: &State, user_id: &UserId, auth_token: &AuthToken) -> Option<SessionId> {
-    let tok = state.auth_tokens.get(user_id)?;
-    if tok == auth_token {
-        Some(state.session_ids.get(user_id)?.clone())
-    } else {
-        None
+    pub async fn handle(&mut self, msg: Message) {
+        match msg {
+            Message::Connect(sid, n, tx) => self.handle_connect(sid, n, tx).await,
+            Message::Create(n, tx) => self.handle_create(n, tx).await,
+            Message::DeployPiece(tok, p, pos, tx) => {
+                self.handle_deploy_piece(tok, p, pos, tx).await
+            }
+            Message::GarbageCollect => self.handle_garbage_collect().await,
+            Message::MovePiece(tok, c, tx) => self.handle_move_piece(tok, c, tx).await,
+            Message::Reconnect(tok, tx) => self.handle_reconnect(tok, tx).await,
+            Message::SetParticipants(tok, p, tx) => self.handle_set_participants(tok, p, tx).await,
+            Message::Start(tok, tx) => self.handle_start(tok, tx).await,
+            Message::Subscribe(tok, tx) => self.handle_subscribe(tok, tx).await,
+        };
     }
 }
