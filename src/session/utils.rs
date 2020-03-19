@@ -13,8 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use super::Session;
+use crate::common::{User, UserId, UserStatus};
 use bughouse_rs::logic::board::Piece;
-
 pub use bughouse_rs::parse::parser::parse as parse_change;
 
 pub fn validate_user_name(name: &str) -> bool {
