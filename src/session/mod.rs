@@ -24,6 +24,7 @@ use crate::registry::Message as RegistryMessage;
 use bughouse_rs::infoCourier::infoCourier::gen_yfen;
 use bughouse_rs::logic::ChessLogic;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use tokio::sync::oneshot::Sender;
 use tokio::sync::{broadcast, mpsc};
 
@@ -47,7 +48,9 @@ pub struct Session {
     parent_handle: mpsc::Sender<RegistryMessage>,
     users: HashMap<UserId, User>,
     user_ids: HashMap<AuthToken, UserId>,
+    queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
     logic: ChessLogic,
+    match_id: usize,
     started: bool,
     broadcast_tx: broadcast::Sender<String>,
     failed_broadcasts: usize,
@@ -65,7 +68,9 @@ impl Session {
             parent_handle,
             users: HashMap::with_capacity(MAP_START_CAPACITY),
             user_ids: HashMap::with_capacity(MAP_START_CAPACITY),
+            queue: VecDeque::with_capacity(0),
             logic: ChessLogic::new(),
+            match_id: 0,
             started: false,
             broadcast_tx,
             failed_broadcasts: 0,
@@ -301,7 +306,10 @@ async fn handle_set_participants(
             DispatcherMessageError::MustBeSessionOwner,
         ));
         return;
-    } else if participants.iter().any(|uid| !s.users.contains_key(uid)) {
+    } else if s.match_id != 0
+        || s.started
+        || participants.iter().any(|uid| !s.users.contains_key(uid))
+    {
         tx.send(DispatcherMessage::Error(
             DispatcherMessageError::PreconditionFailure,
         ));
@@ -320,15 +328,44 @@ async fn handle_start(s: &mut Session, user_id: UserId, tx: Sender<DispatcherMes
             DispatcherMessageError::MustBeSessionOwner,
         ));
         return;
-    } else if !(4..=MAX_NUM_OF_PARTICIPANTS)
-        .contains(&s.users.values().filter(|&u| u.is_participant()).count())
-    {
+    }
+    if s.started {
         tx.send(DispatcherMessage::Error(
             DispatcherMessageError::PreconditionFailure,
         ));
         return;
     }
-    s.started = true;
-    tx.send(DispatcherMessage::Response(Response::Success));
-    s.notify_all().await;
+    let participants: Vec<UserId> = s
+        .users
+        .iter()
+        .filter(|&(_, u)| u.is_participant())
+        .map(|(&uid, _)| uid)
+        .collect();
+    if participants.len() < 4 || participants.len() > 5 {
+        tx.send(DispatcherMessage::Error(
+            DispatcherMessageError::PreconditionFailure,
+        ));
+        return;
+    }
+    let pairings = utils::create_pairings(participants.len() as u8);
+    s.queue = pairings
+        .iter()
+        .map(|&((a, b), (c, d))| {
+            (
+                (participants[a as usize], participants[b as usize]),
+                (participants[c as usize], participants[d as usize]),
+            )
+        })
+        .collect();
+    let first = s.queue.pop_front();
+    if let Some(first) = first {
+        let ((a, b), (c, d)) = first;
+        s.users.get_mut(&a).unwrap().status = UserStatus::Active(true, true);
+        s.users.get_mut(&b).unwrap().status = UserStatus::Active(false, false);
+        s.users.get_mut(&c).unwrap().status = UserStatus::Active(true, false);
+        s.users.get_mut(&d).unwrap().status = UserStatus::Active(false, true);
+        s.started = true;
+        tx.send(DispatcherMessage::Response(Response::Success));
+        s.notify_all().await;
+    }
 }
