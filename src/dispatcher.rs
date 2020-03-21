@@ -60,7 +60,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 type Sender = mpsc::Sender<RegistryMessage>;
 
-pub async fn dispatch(mut handle: Sender, req: hyper::Request<Body>) -> Result {
+pub async fn dispatch(handle: Sender, req: hyper::Request<Body>) -> Result {
     match (req.method(), req.uri().path()) {
         (&hyper::Method::GET, "/events") => dispatch_events(handle, req).await,
         (&hyper::Method::POST, "/api") => dispatch_api(handle, req.into_body()).await,
