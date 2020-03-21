@@ -15,35 +15,22 @@
 
 mod common;
 mod dispatcher;
+mod registry;
 mod session;
-mod state;
 
-use std::error::Error;
-
+use dispatcher::{dispatch, Error as DispatchError};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::Server;
-
-use dispatcher::dispatch;
-use state::StateActor;
-
-pub type ServerError = Box<dyn Error + Send + Sync>;
+use registry::Registry;
 
 const LISTEN_ADDR: &'static str = "0.0.0.0:8080";
 
 #[tokio::main]
-async fn main() -> Result<(), ServerError> {
-    let state = StateActor::new();
-    let state_copy = state.clone();
-    tokio::spawn(async move {
-        let mut state = state_copy;
-        loop {
-            tokio::time::delay_for(std::time::Duration::from_secs(900)).await;
-            state.garbage_collect().await;
-        }
-    });
+async fn main() -> Result<(), DispatchError> {
+    let handle = Registry::spawn();
     let make_svc = make_service_fn(|_| {
-        let state = state.clone();
-        async { Ok::<_, ServerError>(service_fn(move |req| dispatch(state.clone(), req))) }
+        let handle = handle.clone();
+        async { Ok::<_, DispatchError>(service_fn(move |req| dispatch(handle.clone(), req))) }
     });
     Server::bind(&LISTEN_ADDR.parse()?).serve(make_svc).await?;
     Ok(())

@@ -13,24 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::iter::FromIterator;
-pub mod pairings;
-pub use pairings::create_pairings;
+mod pairings;
 
-use super::Session;
-use crate::common::{User, UserId, UserStatus};
 use bughouse_rs::logic::board::Piece;
-pub use bughouse_rs::parse::parser::parse as parse_change;
-use std::collections::LinkedList;
-
 use std::collections::VecDeque;
-use std::option::Option;
-use std::ops::Rem;
+use std::iter::FromIterator;
 
-
-pub fn validate_user_name(name: &str) -> bool {
-    !name.is_empty() && name.chars().all(|c| c.is_alphabetic() || c.is_whitespace())
-}
+pub use bughouse_rs::parse::parser::parse as parse_change;
 
 pub fn parse_piece(s: &String) -> Option<Piece> {
     match s.as_str() {
@@ -71,43 +60,35 @@ pub fn parse_pos(s: &String) -> Option<(usize, usize)> {
     }
 }
 
-pub fn create_pairings_wr(n:u8) -> VecDeque<((u8,u8),(u8,u8))> {
+pub fn create_pairings(n: u8) -> VecDeque<((u8, u8), (u8, u8))> {
     if n == 4 {
-        let hard_coded = VecDeque::from_iter(vec![   
-            ((1,2),(3,4)),
-            ((1,2),(4,3)),
-            ((2,1),(3,4)),
-            ((2,1),(4,3)),
-            ((1,3),(2,4)),
-            ((1,3),(4,2)),
-            ((3,1),(2,4)),
-            ((3,1),(4,2)),
-            ((2,3),(1,4)),
-            ((2,3),(4,1)),
-            ((3,2),(1,4)),
-            ((3,2),(4,1)),
-            ((1,4),(2,3)),
-            ((1,4),(3,2)),
-            ((4,1),(2,3)),
-            ((4,1),(3,2)),
-            ((2,4),(1,3)),
-            ((2,4),(3,1)),
-            ((4,2),(1,3)),
-            ((4,2),(3,1)),
-            ((3,4),(1,2)),
-            ((3,4),(2,1)),
-            ((4,3),(1,2)),
-            ((4,3),(2,1))
-        ]);
-       
-        hard_coded
-    }else{
-        let hmph = create_pairings(4);
-        hmph
+        VecDeque::from_iter(vec![
+            ((1, 2), (3, 4)),
+            ((1, 2), (4, 3)),
+            ((2, 1), (3, 4)),
+            ((2, 1), (4, 3)),
+            ((1, 3), (2, 4)),
+            ((1, 3), (4, 2)),
+            ((3, 1), (2, 4)),
+            ((3, 1), (4, 2)),
+            ((2, 3), (1, 4)),
+            ((2, 3), (4, 1)),
+            ((3, 2), (1, 4)),
+            ((3, 2), (4, 1)),
+            ((1, 4), (2, 3)),
+            ((1, 4), (3, 2)),
+            ((4, 1), (2, 3)),
+            ((4, 1), (3, 2)),
+            ((2, 4), (1, 3)),
+            ((2, 4), (3, 1)),
+            ((4, 2), (1, 3)),
+            ((4, 2), (3, 1)),
+            ((3, 4), (1, 2)),
+            ((3, 4), (2, 1)),
+            ((4, 3), (1, 2)),
+            ((4, 3), (2, 1)),
+        ])
+    } else {
+        pairings::create_pairings(4)
     }
-   
-
-
 }
-
-

@@ -13,25 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use rand::Rng;
+use rand::{distributions, thread_rng, Rng};
+use std::iter::repeat;
 
-use crate::common::{AuthToken, SessionId, UserId};
-
-pub fn rand_auth_token() -> AuthToken {
+pub fn rand_auth_token() -> String {
     rand_alphanum_string(32)
 }
 
-pub fn rand_user_id() -> UserId {
-    rand_alphanum_string(16)
-}
-
-pub fn rand_session_id() -> SessionId {
+pub fn rand_session_id() -> String {
     rand_alphanum_string(4)
 }
 
 fn rand_alphanum_string(len: usize) -> String {
-    std::iter::repeat(())
-        .map(|()| rand::thread_rng().sample(rand::distributions::Alphanumeric))
+    repeat(())
+        .map(|()| thread_rng().sample(distributions::Alphanumeric))
         .take(len)
         .collect()
 }

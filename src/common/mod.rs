@@ -13,31 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+mod data;
+mod requests;
+mod utils;
 
-use bughouse_rs::infoCourier::infoCourier::gen_yfen;
-use serde::{Deserialize, Serialize};
-
-use crate::common::User;
-
-use super::Session;
-
-#[derive(Clone, Deserialize, Serialize)]
-pub struct Event {
-    pub users: HashMap<String, User>,
-    pub owner_id: String,
-    pub started: bool,
-    pub boards: [String; 2],
-}
-
-impl From<&mut Session> for Event {
-    fn from(session: &mut Session) -> Self {
-        let (x, y) = gen_yfen(&mut session.logic);
-        Event {
-            users: session.users.clone(),
-            owner_id: session.owner_id.clone(),
-            started: session.started,
-            boards: [x, y],
-        }
-    }
-}
+pub use data::{AuthToken, SessionId, User, UserId, UserStatus};
+pub use requests::{Authenticated, Event, Request, Response};
