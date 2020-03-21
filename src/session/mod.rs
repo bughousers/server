@@ -34,12 +34,14 @@ const MAX_NUM_OF_FAILED_BROADCASTS: usize = 20;
 const MAX_NUM_OF_PARTICIPANTS: usize = 5;
 const MAX_NUM_OF_USERS: usize = std::u8::MAX as usize + 1;
 
+/// Enum of message types which `Session` can handle.
 #[derive(Debug)]
 pub enum Message {
     Request(Request, Sender<DispatcherMessage>),
     Subscribe(Sender<broadcast::Receiver<String>>),
 }
 
+/// Session data.
 pub struct Session {
     id: SessionId,
     parent_handle: mpsc::Sender<RegistryMessage>,

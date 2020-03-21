@@ -21,6 +21,10 @@ use hyper::{body, header, Body, StatusCode};
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 
+/// Enum of message types which the dispatcher can handle.
+///
+/// Unlike `Registry` and `Session`, the dispatcher will only receive a
+/// `Message` as a response.
 #[derive(Debug)]
 pub enum Message {
     Response(Response),
@@ -45,10 +49,10 @@ impl Into<hyper::Response<Body>> for MessageError {
                 MessageError::AuthTokenInvalid => StatusCode::UNAUTHORIZED,
                 MessageError::CannotParse => StatusCode::BAD_REQUEST,
                 MessageError::MustBeSessionOwner => StatusCode::FORBIDDEN,
-                MessageError::PreconditionFailure => StatusCode::BAD_REQUEST,
-                MessageError::SessionIdInvalid => StatusCode::NOT_FOUND,
-                MessageError::TooManyUsers => StatusCode::BAD_REQUEST,
-                MessageError::UserNameInvalid => StatusCode::BAD_REQUEST,
+                MessageError::PreconditionFailure => StatusCode::UNPROCESSABLE_ENTITY,
+                MessageError::SessionIdInvalid => StatusCode::UNPROCESSABLE_ENTITY,
+                MessageError::TooManyUsers => StatusCode::UNPROCESSABLE_ENTITY,
+                MessageError::UserNameInvalid => StatusCode::UNPROCESSABLE_ENTITY,
             })
             .body(hyper::Body::empty())
             .unwrap()
