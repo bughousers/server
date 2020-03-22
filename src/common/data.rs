@@ -78,12 +78,7 @@ impl User {
     }
 
     pub fn is_participant(&self) -> bool {
-        self.status == UserStatus::Inactive
-            || if let UserStatus::Active(_, _) = self.status {
-                true
-            } else {
-                false
-            }
+        self.status.is_participant()
     }
 }
 
@@ -97,4 +92,25 @@ pub enum UserStatus {
     Inactive,
     /// User is a spectator. They will never be an active player in a match.
     Spectator,
+}
+
+impl UserStatus {
+    pub fn is_active(&self) -> bool {
+        match self {
+            UserStatus::Active(_, _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_inactive(&self) -> bool {
+        self == &UserStatus::Inactive
+    }
+
+    pub fn is_spectator(&self) -> bool {
+        self == &UserStatus::Spectator
+    }
+
+    pub fn is_participant(&self) -> bool {
+        self.is_active() || self.is_inactive()
+    }
 }
