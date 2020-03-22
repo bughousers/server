@@ -17,9 +17,10 @@ use crate::common::*;
 use crate::registry::Message as RegistryMessage;
 use crate::session;
 use hyper::http::response;
-use hyper::{body, header, Body, StatusCode};
+use hyper::{body, header, Body, Method, StatusCode};
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
+use url::Url;
 
 /// Enum of message types which the dispatcher can handle.
 ///
@@ -65,9 +66,11 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 type Sender = mpsc::Sender<RegistryMessage>;
 
 pub async fn dispatch(handle: Sender, req: hyper::Request<Body>) -> Result {
-    match (req.method(), req.uri().path()) {
-        (&hyper::Method::GET, "/events") => dispatch_events(handle, req).await,
-        (&hyper::Method::POST, "/api") => dispatch_api(handle, req.into_body()).await,
+    let url = Url::parse(&req.uri().to_string())?;
+    let parts: Vec<&str> = url.path_segments().unwrap().collect();
+    match (req.method(), parts.as_slice()) {
+        (&Method::GET, &["events"]) => dispatch_events(handle, req).await,
+        (&Method::POST, &["api"]) => dispatch_api(handle, req.into_body()).await,
         _ => not_found(),
     }
 }
