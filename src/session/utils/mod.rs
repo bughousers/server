@@ -21,8 +21,8 @@ use std::iter::FromIterator;
 
 pub use bughouse_rs::parse::parser::parse as parse_change;
 
-pub fn parse_piece(s: &String) -> Option<Piece> {
-    match s.as_str() {
+pub fn parse_piece(s: &str) -> Option<Piece> {
+    match s {
         "b" => Some(Piece::b),
         "B" => Some(Piece::B),
         "E" => Some(Piece::E),
@@ -49,7 +49,7 @@ pub fn parse_piece(s: &String) -> Option<Piece> {
     }
 }
 
-pub fn parse_pos(s: &String) -> Option<(usize, usize)> {
+pub fn parse_pos(s: &str) -> Option<(usize, usize)> {
     let mut buf = s.bytes();
     let col = buf.next()? as usize;
     let row = buf.next()? as usize;
