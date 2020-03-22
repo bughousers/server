@@ -15,22 +15,22 @@
 
 mod common;
 mod dispatcher;
-mod registry;
 mod session;
+mod sessions;
 
 use dispatcher::{dispatch, Error as DispatchError};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::Server;
-use registry::Registry;
+use sessions::Sessions;
 
 const LISTEN_ADDR: &'static str = "0.0.0.0:8080";
 
 #[tokio::main]
 async fn main() -> Result<(), DispatchError> {
-    let handle = Registry::spawn();
+    let sessions = Sessions::new();
     let make_svc = make_service_fn(|_| {
-        let handle = handle.clone();
-        async { Ok::<_, DispatchError>(service_fn(move |req| dispatch(handle.clone(), req))) }
+        let sessions = sessions.clone();
+        async { Ok::<_, DispatchError>(service_fn(move |req| dispatch(sessions.clone(), req))) }
     });
     Server::bind(&LISTEN_ADDR.parse()?).serve(make_svc).await?;
     Ok(())

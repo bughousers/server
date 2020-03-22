@@ -14,12 +14,13 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::common::*;
-use crate::registry::Message as RegistryMessage;
-use crate::session;
+use crate::session::Message as SessionMessage;
+use crate::sessions::Sessions;
+use futures::sink::SinkExt;
 use hyper::http::response;
 use hyper::{body, header, Body, Method, StatusCode};
 use std::collections::HashMap;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use url::Url;
 
 /// Enum of message types which the dispatcher can handle.
@@ -63,43 +64,37 @@ impl Into<hyper::Response<Body>> for MessageError {
 pub type Result = std::result::Result<hyper::Response<Body>, Error>;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-type Sender = mpsc::Sender<RegistryMessage>;
-
-pub async fn dispatch(handle: Sender, req: hyper::Request<Body>) -> Result {
+pub async fn dispatch(sessions: Sessions, req: hyper::Request<Body>) -> Result {
     let url = Url::parse(&req.uri().to_string())?;
     let parts: Vec<&str> = url.path_segments().unwrap().collect();
     match (parts.as_slice(), req.method()) {
-        (&["api"], &Method::POST) => dispatch_api(handle, req.into_body()).await,
-        (&["events"], &Method::GET) => dispatch_events(handle, req).await,
-        (&["v1", "sessions"], &Method::POST) => dispatch_api(handle, req.into_body()).await,
-        (&["v1", "sessions", sid], &Method::DELETE) => dispatch_api(handle, req.into_body()).await,
-        (&["v1", "sessions", sid], &Method::POST) => dispatch_api(handle, req.into_body()).await,
+        (&["api"], &Method::POST) => dispatch_api(sessions, req.into_body()).await,
+        (&["events"], &Method::GET) => dispatch_events(sessions, req).await,
+        (&["v1", "sessions"], &Method::POST) => dispatch_api(sessions, req.into_body()).await,
+        (&["v1", "sessions", sid], &Method::DELETE) => {
+            dispatch_api(sessions, req.into_body()).await
+        }
+        (&["v1", "sessions", sid], &Method::POST) => dispatch_api(sessions, req.into_body()).await,
         (&["v1", "sessions", sid, "games"], &Method::POST) => {
-            dispatch_api(handle, req.into_body()).await
+            dispatch_api(sessions, req.into_body()).await
         }
         (&["v1", "sessions", sid, "games", gid, "board"], &Method::POST) => {
-            dispatch_api(handle, req.into_body()).await
+            dispatch_api(sessions, req.into_body()).await
         }
         (&["v1", "sessions", sid, "participants"], &Method::PUT) => {
-            dispatch_api(handle, req.into_body()).await
+            dispatch_api(sessions, req.into_body()).await
         }
-        (&["v1", "sessions", sid, "sse"], &Method::GET) => dispatch_events(handle, req).await,
+        (&["v1", "sessions", sid, "sse"], &Method::GET) => dispatch_events(sessions, req).await,
         _ => not_found(),
     }
 }
 
-async fn dispatch_events(mut handle: Sender, req: hyper::Request<Body>) -> Result {
+async fn dispatch_events(mut sessions: Sessions, req: hyper::Request<Body>) -> Result {
     if let Some(queries) = get_queries(req.uri()) {
         if let Some(&session_id) = queries.get("session_id") {
+            let mut session = sessions.get(&session_id.into()).await.unwrap();
             let (tx, rx) = oneshot::channel();
-            if handle
-                .send(RegistryMessage::Relay(
-                    session_id.into(),
-                    session::Message::Subscribe(tx),
-                ))
-                .await
-                .is_err()
-            {
+            if session.send(SessionMessage::Subscribe(tx)).await.is_err() {
                 return internal_server_error();
             }
             match rx.await {
@@ -114,12 +109,13 @@ async fn dispatch_events(mut handle: Sender, req: hyper::Request<Body>) -> Resul
     }
 }
 
-async fn dispatch_api(mut handle: Sender, body: Body) -> Result {
+async fn dispatch_api(mut sessions: Sessions, body: Body) -> Result {
     let buf = body::to_bytes(body).await?;
     if let Ok(req) = serde_json::from_slice::<Request>(&buf) {
+        let mut session = sessions.get(&"".into()).await.unwrap();
         let (tx, rx) = oneshot::channel();
-        if handle
-            .send(RegistryMessage::Request(req, tx))
+        if session
+            .send(SessionMessage::Request(req, tx))
             .await
             .is_err()
         {

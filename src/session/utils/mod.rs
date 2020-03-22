@@ -21,6 +21,10 @@ use std::iter::FromIterator;
 
 pub use bughouse_rs::parse::parser::parse as parse_change;
 
+pub fn is_valid_user_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_alphabetic() || c.is_whitespace())
+}
+
 pub fn parse_piece(s: &str) -> Option<Piece> {
     match s {
         "b" => Some(Piece::b),

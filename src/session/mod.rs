@@ -20,13 +20,14 @@ mod utils;
 use crate::common::*;
 use crate::dispatcher::Message as DispatcherMessage;
 use crate::dispatcher::MessageError as DispatcherMessageError;
-use crate::registry::Message as RegistryMessage;
 use bughouse_rs::infoCourier::infoCourier::gen_yfen;
 use bughouse_rs::logic::ChessLogic;
+use futures::channel::mpsc;
+use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use tokio::sync::broadcast;
 use tokio::sync::oneshot::Sender;
-use tokio::sync::{broadcast, mpsc};
 
 const BROADCAST_CHANNEL_CAPACITY: usize = 10;
 const CHANNEL_CAPACITY: usize = 5;
@@ -44,8 +45,6 @@ pub enum Message {
 
 /// Session data.
 pub struct Session {
-    id: SessionId,
-    parent_handle: mpsc::Sender<RegistryMessage>,
     users: HashMap<UserId, User>,
     user_ids: HashMap<AuthToken, UserId>,
     queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
@@ -57,28 +56,28 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn spawn(
-        id: SessionId,
-        parent_handle: mpsc::Sender<RegistryMessage>,
-    ) -> mpsc::Sender<Message> {
-        let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let (broadcast_tx, _) = broadcast::channel(BROADCAST_CHANNEL_CAPACITY);
-        let session = Self {
-            id,
-            parent_handle,
+    pub fn new(owner_name: &str) -> Result<Session, &str> {
+        if !utils::is_valid_user_name(owner_name) {
+            return Err("User name contains illegal characters.");
+        }
+        let (tx, _) = broadcast::channel(BROADCAST_CHANNEL_CAPACITY);
+        Ok(Self {
             users: HashMap::with_capacity(MAP_START_CAPACITY),
             user_ids: HashMap::with_capacity(MAP_START_CAPACITY),
             queue: VecDeque::with_capacity(0),
             logic: ChessLogic::new(),
             match_id: 0,
             started: false,
-            broadcast_tx,
+            broadcast_tx: tx,
             failed_broadcasts: 0,
-        };
+        })
+    }
+
+    pub fn spawn(mut self) -> mpsc::Sender<Message> {
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
         tokio::spawn(async move {
-            let (mut session, mut rx) = (session, rx);
-            while let Some(msg) = rx.recv().await {
-                handle(&mut session, msg).await;
+            while let Some(msg) = rx.next().await {
+                handle(&mut self, msg).await;
             }
         });
         tx
@@ -99,12 +98,12 @@ impl Session {
             self.failed_broadcasts += 1;
         }
         // Clearly, no one is listening. The session can be deleted.
-        if self.failed_broadcasts >= MAX_NUM_OF_FAILED_BROADCASTS {
-            self.parent_handle
-                .send(RegistryMessage::Deregister(self.id.clone()))
-                .await
-                .expect("Registry channel is closed");
-        }
+        // if self.failed_broadcasts >= MAX_NUM_OF_FAILED_BROADCASTS {
+        //     self.parent_handle
+        //         .send(RegistryMessage::Deregister(self.id.clone()))
+        //         .await
+        //         .expect("Registry channel is closed");
+        // }
     }
 }
 
@@ -176,10 +175,6 @@ async fn handle_connect(
     let auth_token = AuthToken::new();
     s.users.insert(user_id, user.clone());
     s.user_ids.insert(auth_token.clone(), user_id);
-    s.parent_handle
-        .send(RegistryMessage::Register(auth_token.clone(), session_id))
-        .await
-        .expect("Registry channel is closed");
     tx.send(DispatcherMessage::Response(Response::Connected {
         user,
         auth_token,
@@ -193,10 +188,6 @@ async fn handle_create(s: &mut Session, user_name: String, tx: Sender<Dispatcher
     let auth_token = AuthToken::new();
     s.users.insert(user_id, user);
     s.user_ids.insert(auth_token.clone(), user_id);
-    s.parent_handle
-        .send(RegistryMessage::Register(auth_token.clone(), s.id.clone()))
-        .await
-        .expect("Registry channel is closed");
     tx.send(DispatcherMessage::Response(Response::Created {
         auth_token,
     }));
@@ -289,10 +280,10 @@ async fn handle_reconnect(s: &mut Session, user_id: UserId, tx: Sender<Dispatche
         .get(&user_id)
         .expect("User ID is not associated with any user")
         .clone();
-    tx.send(DispatcherMessage::Response(Response::Reconnected {
-        session_id: s.id.clone(),
-        user,
-    }));
+    // tx.send(DispatcherMessage::Response(Response::Reconnected {
+    //     session_id: s.id.clone(),
+    //     user,
+    // }));
 }
 
 async fn handle_set_participants(
