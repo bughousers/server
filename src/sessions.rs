@@ -34,13 +34,23 @@ impl Sessions {
         }
     }
 
-    pub async fn insert(&self, id: SessionId, session: Sender<Message>) {
-        self.sessions.write().await.insert(id, session);
-    }
-
     pub async fn get(&self, id: &SessionId) -> Option<Sender<Message>> {
         // We clone the channel so that the read lock can be released
         // immediately.
         self.sessions.read().await.get(id).map(|s| s.clone())
+    }
+
+    pub async fn insert(&self, id: SessionId, session: Sender<Message>) {
+        self.sessions.write().await.insert(id, session);
+    }
+
+    /// Removes the channel associated with `SessionId` and closes the channel.
+    pub async fn remove(&self, id: &SessionId) {
+        self.sessions
+            .write()
+            .await
+            .remove(id)
+            .iter_mut()
+            .for_each(|tx| tx.close_channel());
     }
 }
