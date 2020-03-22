@@ -27,9 +27,9 @@ impl SessionId {
     }
 }
 
-impl From<&str> for SessionId {
-    fn from(s: &str) -> Self {
-        SessionId(s.to_owned())
+impl<T: Into<String>> From<T> for SessionId {
+    fn from(t: T) -> Self {
+        Self(t.into())
     }
 }
 
