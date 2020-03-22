@@ -33,7 +33,7 @@ impl<T: Into<String>> From<T> for SessionId {
     }
 }
 
-/// An ID which uniquely identifies the user in a session.
+/// An ID which identifies a user in a session. **Not** globally unique.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserId(u8);
@@ -46,8 +46,8 @@ impl UserId {
     }
 }
 
-/// `AuthToken` uniquely identifies the user across sessions. This token should
-/// be kept secret between the user and the server.
+/// `AuthToken` lets us verify a request's authenticity. This token should be
+/// kept secret between the user and the server.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthToken(String);
