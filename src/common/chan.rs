@@ -24,7 +24,7 @@ pub trait Msg {
 }
 
 /// Create an MPSC channel.
-pub fn channel<M: Msg>(capacity: usize) -> (Sender<M>, Receiver<M>) {
+pub fn chan<M: Msg>(capacity: usize) -> (Sender<M>, Receiver<M>) {
     let (tx, rx) = mpsc::channel(capacity);
     let tx = Sender { tx };
     let rx = Receiver { rx };
