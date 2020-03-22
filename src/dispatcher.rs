@@ -68,9 +68,22 @@ type Sender = mpsc::Sender<RegistryMessage>;
 pub async fn dispatch(handle: Sender, req: hyper::Request<Body>) -> Result {
     let url = Url::parse(&req.uri().to_string())?;
     let parts: Vec<&str> = url.path_segments().unwrap().collect();
-    match (req.method(), parts.as_slice()) {
-        (&Method::GET, &["events"]) => dispatch_events(handle, req).await,
-        (&Method::POST, &["api"]) => dispatch_api(handle, req.into_body()).await,
+    match (parts.as_slice(), req.method()) {
+        (&["api"], &Method::POST) => dispatch_api(handle, req.into_body()).await,
+        (&["events"], &Method::GET) => dispatch_events(handle, req).await,
+        (&["v1", "sessions"], &Method::POST) => dispatch_api(handle, req.into_body()).await,
+        (&["v1", "sessions", sid], &Method::DELETE) => dispatch_api(handle, req.into_body()).await,
+        (&["v1", "sessions", sid], &Method::POST) => dispatch_api(handle, req.into_body()).await,
+        (&["v1", "sessions", sid, "games"], &Method::POST) => {
+            dispatch_api(handle, req.into_body()).await
+        }
+        (&["v1", "sessions", sid, "games", gid, "board"], &Method::POST) => {
+            dispatch_api(handle, req.into_body()).await
+        }
+        (&["v1", "sessions", sid, "participants"], &Method::PUT) => {
+            dispatch_api(handle, req.into_body()).await
+        }
+        (&["v1", "sessions", sid, "sse"], &Method::GET) => dispatch_events(handle, req).await,
         _ => not_found(),
     }
 }
