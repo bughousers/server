@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use super::data::{AuthToken, SessionId, UserId};
+use hyper::Body;
 use serde::{Deserialize, Serialize};
 
 /// `Created` is sent when a session is successfully created as per user
@@ -26,6 +27,13 @@ pub struct Created {
     pub auth_token: AuthToken,
 }
 
+impl Into<Body> for Created {
+    fn into(self) -> Body {
+        let json = serde_json::to_string(&self).unwrap();
+        Body::from(json)
+    }
+}
+
 /// `Joined` is sent when a user succesfully joins a session.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,9 +43,23 @@ pub struct Joined {
     pub auth_token: AuthToken,
 }
 
+impl Into<Body> for Joined {
+    fn into(self) -> Body {
+        let json = serde_json::to_string(&self).unwrap();
+        Body::from(json)
+    }
+}
+
 /// `Err` is sent when the server fails to fulfill a user request.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Error {
     pub error: String,
+}
+
+impl Into<Body> for Error {
+    fn into(self) -> Body {
+        let json = serde_json::to_string(&self).unwrap();
+        Body::from(json)
+    }
 }
