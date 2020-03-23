@@ -14,8 +14,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use futures::channel::{mpsc, oneshot};
-use futures::sink::SinkExt;
-use futures::stream::StreamExt;
+use futures::stream::FusedStream;
+use futures::task::{Context, Poll};
+use futures::{SinkExt, Stream, StreamExt};
+use std::pin::Pin;
 
 /// `Msg` represents a message which you can respond to.
 pub trait Msg {
@@ -58,6 +60,28 @@ impl<M: Msg> Receiver<M> {
     pub async fn recv(&mut self) -> Option<MsgHandle<M>> {
         let (msg, tx) = self.rx.next().await?;
         Some(MsgHandle { msg, tx })
+    }
+}
+
+impl<M: Msg> Stream for Receiver<M> {
+    type Item = MsgHandle<M>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<MsgHandle<M>>> {
+        match Pin::new(&mut self.rx).poll_next(cx) {
+            Poll::Ready(Some((msg, tx))) => Poll::Ready(Some(MsgHandle { msg, tx })),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.rx.size_hint()
+    }
+}
+
+impl<M: Msg> FusedStream for Receiver<M> {
+    fn is_terminated(&self) -> bool {
+        self.rx.is_terminated()
     }
 }
 
