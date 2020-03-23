@@ -16,9 +16,7 @@
 pub mod chan;
 mod data;
 pub mod req;
-mod requests;
 pub mod resp;
 mod utils;
 
 pub use data::{AuthToken, SessionId, User, UserId, UserStatus};
-pub use requests::{Authenticated, Event, Request, Response};
