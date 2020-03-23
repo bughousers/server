@@ -55,7 +55,7 @@ pub enum Join {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Start {
-    pub auth_token: String,
+    pub auth_token: AuthToken,
 }
 
 /// `Board` is received when the user wants to modify the state of the
