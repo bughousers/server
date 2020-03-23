@@ -14,151 +14,149 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::common::*;
-use crate::session::Message as SessionMessage;
 use crate::sessions::Sessions;
-use futures::sink::SinkExt;
-use hyper::http::response;
-use hyper::{body, header, Body, Method, StatusCode};
-use std::collections::HashMap;
-use tokio::sync::oneshot;
+use hyper::http::response::Builder;
+use hyper::{body, header, Body, Method, Response, StatusCode};
 use url::Url;
 
-/// Enum of message types which the dispatcher can handle.
-///
-/// Unlike `Registry` and `Session`, the dispatcher will only receive a
-/// `Message` as a response.
-#[derive(Debug)]
-pub enum Message {
-    Response(Response),
-    Error(MessageError),
-}
-
-#[derive(Debug)]
-pub enum MessageError {
-    AuthTokenInvalid,
-    CannotParse,
-    MustBeSessionOwner,
-    PreconditionFailure,
-    SessionIdInvalid,
-    TooManyUsers,
-    UserNameInvalid,
-}
-
-impl Into<hyper::Response<Body>> for MessageError {
-    fn into(self) -> hyper::Response<Body> {
-        builder()
-            .status(match self {
-                MessageError::AuthTokenInvalid => StatusCode::UNAUTHORIZED,
-                MessageError::CannotParse => StatusCode::BAD_REQUEST,
-                MessageError::MustBeSessionOwner => StatusCode::FORBIDDEN,
-                MessageError::PreconditionFailure => StatusCode::UNPROCESSABLE_ENTITY,
-                MessageError::SessionIdInvalid => StatusCode::UNPROCESSABLE_ENTITY,
-                MessageError::TooManyUsers => StatusCode::UNPROCESSABLE_ENTITY,
-                MessageError::UserNameInvalid => StatusCode::UNPROCESSABLE_ENTITY,
-            })
-            .body(hyper::Body::empty())
-            .unwrap()
-    }
-}
-
-pub type Result = std::result::Result<hyper::Response<Body>, Error>;
+type Request = hyper::Request<Body>;
+pub type Result = std::result::Result<Response<Body>, Error>;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-pub async fn dispatch(sessions: Sessions, req: hyper::Request<Body>) -> Result {
+pub async fn dispatch(sessions: Sessions, req: Request) -> Result {
     let url = Url::parse(&req.uri().to_string())?;
     let parts: Vec<&str> = url.path_segments().unwrap().collect();
-    match (parts.as_slice(), req.method()) {
-        (&["api"], &Method::POST) => dispatch_api(sessions, req.into_body()).await,
-        (&["events"], &Method::GET) => dispatch_events(sessions, req).await,
-        (&["v1", "sessions"], &Method::POST) => dispatch_api(sessions, req.into_body()).await,
-        (&["v1", "sessions", sid], &Method::DELETE) => {
-            dispatch_api(sessions, req.into_body()).await
-        }
-        (&["v1", "sessions", sid], &Method::POST) => dispatch_api(sessions, req.into_body()).await,
-        (&["v1", "sessions", sid, "games"], &Method::POST) => {
-            dispatch_api(sessions, req.into_body()).await
-        }
-        (&["v1", "sessions", sid, "games", gid, "board"], &Method::POST) => {
-            dispatch_api(sessions, req.into_body()).await
-        }
-        (&["v1", "sessions", sid, "participants"], &Method::PUT) => {
-            dispatch_api(sessions, req.into_body()).await
-        }
-        (&["v1", "sessions", sid, "sse"], &Method::GET) => dispatch_events(sessions, req).await,
+    match parts.split_first() {
+        Some((&"v1", rest)) => dispatch_v1(sessions, rest, req).await,
         _ => not_found(),
     }
 }
 
-async fn dispatch_events(mut sessions: Sessions, req: hyper::Request<Body>) -> Result {
-    if let Some(queries) = get_queries(req.uri()) {
-        if let Some(&session_id) = queries.get("session_id") {
-            let mut session = sessions.get(&session_id.into()).await.unwrap();
-            let (tx, rx) = oneshot::channel();
-            if session.send(SessionMessage::Subscribe(tx)).await.is_err() {
-                return internal_server_error();
-            }
-            match rx.await {
-                Ok(rx) => Ok(event_stream_builder().body(Body::wrap_stream(rx))?),
-                _ => not_found(),
-            }
-        } else {
-            bad_request()
-        }
-    } else {
-        bad_request()
+async fn dispatch_v1(sessions: Sessions, parts: &[&str], req: Request) -> Result {
+    match parts.split_first() {
+        Some((&"sessions", rest)) => dispatch_sessions(sessions, rest, req).await,
+        _ => not_found(),
     }
 }
 
-async fn dispatch_api(mut sessions: Sessions, body: Body) -> Result {
-    let buf = body::to_bytes(body).await?;
-    if let Ok(req) = serde_json::from_slice::<Request>(&buf) {
-        let mut session = sessions.get(&"".into()).await.unwrap();
-        let (tx, rx) = oneshot::channel();
-        if session
-            .send(SessionMessage::Request(req, tx))
-            .await
-            .is_err()
-        {
-            return internal_server_error();
-        }
-        match rx.await {
-            Ok(Message::Response(resp)) => Ok(json_builder().body(resp.into())?),
-            Ok(Message::Error(err)) => Ok(err.into()),
-            _ => internal_server_error(),
+async fn dispatch_sessions(sessions: Sessions, parts: &[&str], req: Request) -> Result {
+    if parts.is_empty() && req.method() == &Method::POST {
+        not_found() // TODO: Implement
+    } else if let Some((&sid, rest)) = parts.split_first() {
+        dispatch_session(sessions, rest, req, sid).await
+    } else {
+        not_found()
+    }
+}
+
+async fn dispatch_session(
+    sessions: Sessions,
+    parts: &[&str],
+    req: Request,
+    session_id: &str,
+) -> Result {
+    if parts.is_empty() {
+        if req.method() == &Method::POST {
+            not_found() // TODO: Implement
+        } else if req.method() == &Method::DELETE {
+            not_found() // TODO: Implement
+        } else {
+            not_found()
         }
     } else {
-        bad_request()
+        match parts.split_first() {
+            Some((&"games", rest)) => dispatch_games(sessions, rest, req, session_id).await,
+            Some((&"participants", rest)) => {
+                dispatch_participants(sessions, rest, req, session_id).await
+            }
+            Some((&"sse", rest)) => dispatch_sse(sessions, rest, req, session_id).await,
+            _ => not_found(),
+        }
+    }
+}
+
+async fn dispatch_games(
+    sessions: Sessions,
+    parts: &[&str],
+    req: Request,
+    session_id: &str,
+) -> Result {
+    if parts.is_empty() && req.method() == &Method::POST {
+        not_found() // TODO: Implement
+    } else if let Some((&gid, rest)) = parts.split_first() {
+        dispatch_game(sessions, rest, req, session_id, gid).await
+    } else {
+        not_found()
+    }
+}
+
+async fn dispatch_participants(
+    sessions: Sessions,
+    parts: &[&str],
+    req: Request,
+    session_id: &str,
+) -> Result {
+    if parts.is_empty() && req.method() == &Method::PUT {
+        not_found() // TODO: Implement
+    } else {
+        not_found()
+    }
+}
+
+async fn dispatch_sse(
+    sessions: Sessions,
+    parts: &[&str],
+    req: Request,
+    session_id: &str,
+) -> Result {
+    if parts.is_empty() && req.method() == &Method::GET {
+        not_found() // TODO: Implement
+    } else {
+        not_found()
+    }
+}
+
+async fn dispatch_game(
+    sessions: Sessions,
+    parts: &[&str],
+    req: Request,
+    session_id: &str,
+    game_id: &str,
+) -> Result {
+    match parts.split_first() {
+        Some((&"board", rest)) => dispatch_board(sessions, rest, req, session_id, game_id).await,
+        _ => not_found(),
+    }
+}
+
+async fn dispatch_board(
+    sessions: Sessions,
+    parts: &[&str],
+    req: Request,
+    session_id: &str,
+    game_id: &str,
+) -> Result {
+    if parts.is_empty() && req.method() == &Method::POST {
+        not_found() // TODO: Implement
+    } else {
+        not_found()
     }
 }
 
 // Helper functions
 
-fn get_queries(uri: &hyper::Uri) -> Option<HashMap<&str, &str>> {
-    Some(
-        uri.query()?
-            .split('&')
-            .map(|q| {
-                let mut it = q.splitn(2, '=');
-                let k = it.next().unwrap_or("");
-                let v = it.next().unwrap_or("");
-                (k, v)
-            })
-            .collect(),
-    )
-}
-
 // TODO: Don't set Access-Control-Allow-Origin to *
-fn builder() -> response::Builder {
-    hyper::Response::builder().header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+fn builder() -> Builder {
+    Response::builder().header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
 }
 
-fn event_stream_builder() -> response::Builder {
+fn event_stream_builder() -> Builder {
     builder()
         .header(header::CONNECTION, "keep-alive")
         .header(header::CONTENT_TYPE, "text/event-stream")
 }
 
-fn json_builder() -> response::Builder {
+fn json_builder() -> Builder {
     builder().header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
 }
 
