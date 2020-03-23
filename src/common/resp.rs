@@ -54,7 +54,7 @@ impl Into<Body> for Joined {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Error {
-    pub error: String,
+    pub error: &'static str,
 }
 
 impl Into<Body> for Error {
