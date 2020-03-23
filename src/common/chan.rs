@@ -19,7 +19,6 @@ use futures::stream::StreamExt;
 
 /// `Msg` represents a message which you can respond to.
 pub trait Msg {
-    type Msg;
     type Resp;
 }
 
@@ -33,11 +32,11 @@ pub fn chan<M: Msg>(capacity: usize) -> (Sender<M>, Receiver<M>) {
 
 #[derive(Clone)]
 pub struct Sender<M: Msg> {
-    tx: mpsc::Sender<(M::Msg, oneshot::Sender<M::Resp>)>,
+    tx: mpsc::Sender<(M, oneshot::Sender<M::Resp>)>,
 }
 
 impl<M: Msg> Sender<M> {
-    pub async fn send(&mut self, msg: M::Msg) -> Option<M::Resp> {
+    pub async fn send(&mut self, msg: M) -> Option<M::Resp> {
         let (tx, rx) = oneshot::channel();
         self.tx.send((msg, tx)).await.ok()?;
         rx.await.ok()
@@ -45,7 +44,7 @@ impl<M: Msg> Sender<M> {
 }
 
 pub struct Receiver<M: Msg> {
-    rx: mpsc::Receiver<(M::Msg, oneshot::Sender<M::Resp>)>,
+    rx: mpsc::Receiver<(M, oneshot::Sender<M::Resp>)>,
 }
 
 impl<M: Msg> Receiver<M> {
@@ -57,16 +56,16 @@ impl<M: Msg> Receiver<M> {
 
 /// A message which you can respond to.
 pub struct MsgHandle<M: Msg> {
-    msg: M::Msg,
+    msg: M,
     tx: oneshot::Sender<M::Resp>,
 }
 
 impl<M: Msg> MsgHandle<M> {
-    pub fn msg(&self) -> &M::Msg {
+    pub fn msg(&self) -> &M {
         &self.msg
     }
 
-    pub fn into_msg(self) -> M::Msg {
+    pub fn into_msg(self) -> M {
         self.msg
     }
 
