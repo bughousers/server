@@ -30,7 +30,6 @@ pub fn chan<M: Msg>(capacity: usize) -> (Sender<M>, Receiver<M>) {
     (tx, rx)
 }
 
-#[derive(Clone)]
 pub struct Sender<M: Msg> {
     tx: mpsc::Sender<(M, oneshot::Sender<M::Resp>)>,
 }
@@ -40,6 +39,14 @@ impl<M: Msg> Sender<M> {
         let (tx, rx) = oneshot::channel();
         self.tx.send((msg, tx)).await.ok()?;
         rx.await.ok()
+    }
+}
+
+impl<M: Msg> Clone for Sender<M> {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+        }
     }
 }
 
