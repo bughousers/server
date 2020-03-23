@@ -13,12 +13,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-pub mod chan;
-mod data;
-pub mod req;
-mod requests;
-pub mod resp;
-mod utils;
+use super::data::{AuthToken, SessionId, UserId};
+use serde::{Deserialize, Serialize};
 
-pub use data::{AuthToken, SessionId, User, UserId, UserStatus};
-pub use requests::{Authenticated, Event, Request, Response};
+/// `Created` is sent when a session is successfully created as per user
+/// request.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Created {
+    pub session_id: SessionId,
+    pub user_id: UserId,
+    pub auth_token: AuthToken,
+}
+
+/// `Joined` is sent when a user succesfully joins a session.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Joined {
+    pub user_id: UserId,
+    pub user_name: String,
+    pub auth_token: AuthToken,
+}
