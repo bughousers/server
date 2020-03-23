@@ -34,3 +34,10 @@ pub struct Joined {
     pub user_name: String,
     pub auth_token: AuthToken,
 }
+
+/// `Err` is sent when the server fails to fulfill a user request.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Err {
+    pub error: String,
+}
