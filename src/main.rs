@@ -23,7 +23,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::Server;
 use sessions::Sessions;
 
-const LISTEN_ADDR: &'static str = "0.0.0.0:8080";
+pub const LISTEN_ADDR: &'static str = "0.0.0.0:8080";
 
 #[tokio::main]
 async fn main() -> Result<(), DispatchError> {
