@@ -14,21 +14,66 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::common::*;
+use crate::session::Session;
 use crate::sessions::Sessions;
+use crate::LISTEN_ADDR;
 use hyper::http::response::Builder;
 use hyper::{body, header, Body, Method, Response, StatusCode};
 use url::Url;
 
 type Request = hyper::Request<Body>;
 pub type Result = std::result::Result<Response<Body>, Error>;
-pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-pub async fn dispatch(sessions: Sessions, req: Request) -> Result {
-    let url = Url::parse(&req.uri().to_string())?;
+#[derive(Debug)]
+pub enum Error {
+    CannotParse,
+    InvalidUserName,
+    InvalidSessionId,
+    InvalidAuthToken,
+    MustBeSessionOwner,
+    TooManyUsers,
+    TooManyParticipants,
+    InvalidParticipantList,
+    NotEnoughParticipants,
+    GameHasAlreadyStarted,
+    GameHasNotStartedYet,
+    IllegalMove,
+    NotAnActiveParticipant,
+    SessionHasEnded,
+}
+
+impl Into<Response<Body>> for Error {
+    fn into(self) -> Response<Body> {
+        bad_request_with_error(match self {
+            Error::CannotParse => "Failed to parse request.",
+            Error::GameHasAlreadyStarted => "The game has already started.",
+            Error::GameHasNotStartedYet => "The game hasn't started yet.",
+            Error::IllegalMove => "Illegal move.",
+            Error::InvalidAuthToken => "Authentication token is invalid.",
+            Error::InvalidParticipantList => "List of participants is invalid.",
+            Error::InvalidSessionId => "Session ID is invalid.",
+            Error::InvalidUserName => "User name contains illegal characters.",
+            Error::MustBeSessionOwner => "This action can only be done by the session owner.",
+            Error::NotAnActiveParticipant => "The user is not an active participant.",
+            Error::NotEnoughParticipants => "There aren't enough participants yet.",
+            Error::SessionHasEnded => "Session has ended.",
+            Error::TooManyParticipants => "There are too many participants.",
+            Error::TooManyUsers => "There are too many users.",
+        })
+        .unwrap()
+    }
+}
+
+pub async fn dispatch(sessions: Sessions, req: Request) -> hyper::Result<Response<Body>> {
+    let url = format!("http://{}{}", LISTEN_ADDR, req.uri());
+    let url = Url::parse(&url).unwrap();
     let parts: Vec<&str> = url.path_segments().unwrap().collect();
     match parts.split_first() {
-        Some((&"v1", rest)) => dispatch_v1(sessions, rest, req).await,
-        _ => not_found(),
+        Some((&"v1", rest)) => match dispatch_v1(sessions, rest, req).await {
+            Ok(resp) => Ok(resp),
+            Err(err) => Ok(err.into()),
+        },
+        _ => Ok(not_found().unwrap()),
     }
 }
 
@@ -41,23 +86,67 @@ async fn dispatch_v1(sessions: Sessions, parts: &[&str], req: Request) -> Result
 
 async fn dispatch_sessions(sessions: Sessions, parts: &[&str], req: Request) -> Result {
     if parts.is_empty() && req.method() == &Method::POST {
-        not_found() // TODO: Implement
+        let json = body::to_bytes(req.into_body())
+            .await
+            .or(Err(Error::CannotParse))?;
+        let req = serde_json::from_slice::<req::Create>(&json).or(Err(Error::CannotParse))?;
+        let session = Session::new(&req.owner_name);
+        if let Some((session, auth_token)) = session {
+            let session_id = SessionId::new();
+            session.tick();
+            sessions.insert(session_id.clone(), session).await;
+            to_json(resp::Created {
+                session_id,
+                user_id: UserId::OWNER,
+                auth_token: auth_token,
+            })
+        } else {
+            Err(Error::InvalidUserName)
+        }
     } else if let Some((&sid, rest)) = parts.split_first() {
-        dispatch_session(sessions, rest, req, sid).await
+        let session = sessions
+            .get(&sid.into())
+            .await
+            .ok_or(Error::InvalidSessionId)?;
+        dispatch_session(session, rest, req).await
     } else {
         not_found()
     }
 }
 
-async fn dispatch_session(
-    sessions: Sessions,
-    parts: &[&str],
-    req: Request,
-    session_id: &str,
-) -> Result {
+async fn dispatch_session(session: Session, parts: &[&str], req: Request) -> Result {
     if parts.is_empty() {
         if req.method() == &Method::POST {
-            not_found() // TODO: Implement
+            let json = body::to_bytes(req.into_body())
+                .await
+                .or(Err(Error::CannotParse))?;
+            let req = serde_json::from_slice::<req::Join>(&json).or(Err(Error::CannotParse))?;
+            match req {
+                req::Join::Join { user_name } => {
+                    let (user_id, auth_token) =
+                        session.with(|mut s| s.add_user(&user_name)).await?;
+                    to_json(resp::Joined {
+                        user_id,
+                        user_name,
+                        auth_token,
+                    })
+                }
+                req::Join::Rejoin { auth_token } => {
+                    let (user_id, user_name) = session
+                        .with(|s| {
+                            let user_id =
+                                s.get_user_id(&auth_token).ok_or(Error::InvalidAuthToken)?;
+                            let user_name = s.get_user_name(&user_id).unwrap().clone();
+                            Ok((user_id, user_name))
+                        })
+                        .await?;
+                    to_json(resp::Joined {
+                        user_id,
+                        user_name,
+                        auth_token,
+                    })
+                }
+            }
         } else if req.method() == &Method::DELETE {
             not_found() // TODO: Implement
         } else {
@@ -65,79 +154,84 @@ async fn dispatch_session(
         }
     } else {
         match parts.split_first() {
-            Some((&"games", rest)) => dispatch_games(sessions, rest, req, session_id).await,
-            Some((&"participants", rest)) => {
-                dispatch_participants(sessions, rest, req, session_id).await
-            }
-            Some((&"sse", rest)) => dispatch_sse(sessions, rest, req, session_id).await,
+            Some((&"games", rest)) => dispatch_games(session, rest, req).await,
+            Some((&"participants", rest)) => dispatch_participants(session, rest, req).await,
+            Some((&"sse", rest)) => dispatch_sse(session, rest, req).await,
             _ => not_found(),
         }
     }
 }
 
-async fn dispatch_games(
-    sessions: Sessions,
-    parts: &[&str],
-    req: Request,
-    session_id: &str,
-) -> Result {
+async fn dispatch_games(session: Session, parts: &[&str], req: Request) -> Result {
     if parts.is_empty() && req.method() == &Method::POST {
-        not_found() // TODO: Implement
+        let json = body::to_bytes(req.into_body())
+            .await
+            .or(Err(Error::CannotParse))?;
+        let req = serde_json::from_slice::<req::Start>(&json).or(Err(Error::CannotParse))?;
+        session.with(|mut s| s.start(&req.auth_token)).await?;
+        no_content()
     } else if let Some((&gid, rest)) = parts.split_first() {
-        dispatch_game(sessions, rest, req, session_id, gid).await
+        dispatch_game(session, rest, req, gid).await
     } else {
         not_found()
     }
 }
 
-async fn dispatch_participants(
-    sessions: Sessions,
-    parts: &[&str],
-    req: Request,
-    session_id: &str,
-) -> Result {
+async fn dispatch_participants(session: Session, parts: &[&str], req: Request) -> Result {
     if parts.is_empty() && req.method() == &Method::PUT {
-        not_found() // TODO: Implement
+        let json = body::to_bytes(req.into_body())
+            .await
+            .or(Err(Error::CannotParse))?;
+        let req = serde_json::from_slice::<req::Participants>(&json).or(Err(Error::CannotParse))?;
+        session
+            .with(|mut s| s.set_participants(&req.auth_token, req.participants))
+            .await?;
+        no_content()
     } else {
         not_found()
     }
 }
 
-async fn dispatch_sse(
-    sessions: Sessions,
-    parts: &[&str],
-    req: Request,
-    session_id: &str,
-) -> Result {
+async fn dispatch_sse(session: Session, parts: &[&str], req: Request) -> Result {
     if parts.is_empty() && req.method() == &Method::GET {
-        not_found() // TODO: Implement
+        let rx = session.with(|mut s| s.subscribe()).await;
+        Ok(event_stream_builder().body(Body::wrap_stream(rx)).unwrap())
     } else {
         not_found()
     }
 }
 
-async fn dispatch_game(
-    sessions: Sessions,
-    parts: &[&str],
-    req: Request,
-    session_id: &str,
-    game_id: &str,
-) -> Result {
+async fn dispatch_game(session: Session, parts: &[&str], req: Request, game_id: &str) -> Result {
     match parts.split_first() {
-        Some((&"board", rest)) => dispatch_board(sessions, rest, req, session_id, game_id).await,
+        Some((&"board", rest)) => dispatch_board(session, rest, req, game_id).await,
         _ => not_found(),
     }
 }
 
-async fn dispatch_board(
-    sessions: Sessions,
-    parts: &[&str],
-    req: Request,
-    session_id: &str,
-    game_id: &str,
-) -> Result {
+async fn dispatch_board(session: Session, parts: &[&str], req: Request, game_id: &str) -> Result {
     if parts.is_empty() && req.method() == &Method::POST {
-        not_found() // TODO: Implement
+        let json = body::to_bytes(req.into_body())
+            .await
+            .or(Err(Error::CannotParse))?;
+        let req = serde_json::from_slice::<req::Board>(&json).or(Err(Error::CannotParse))?;
+        match req {
+            req::Board::Deploy {
+                auth_token,
+                piece,
+                pos,
+            } => {
+                session
+                    .with(|mut s| s.deploy_piece(&auth_token, piece, pos))
+                    .await?;
+                no_content()
+            }
+            req::Board::Move { auth_token, change } => {
+                session
+                    .with(|mut s| s.move_piece(&auth_token, change))
+                    .await?;
+                no_content()
+            }
+        }
     } else {
         not_found()
     }
@@ -160,20 +254,34 @@ fn json_builder() -> Builder {
     builder().header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
 }
 
+fn to_json<T: Into<Body>>(t: T) -> Result {
+    Ok(json_builder().body(t.into()).unwrap())
+}
+
+fn no_content() -> Result {
+    Ok(builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(Body::empty())
+        .unwrap())
+}
+
 fn bad_request() -> Result {
     Ok(builder()
         .status(StatusCode::BAD_REQUEST)
-        .body(Body::empty())?)
+        .body(Body::empty())
+        .unwrap())
+}
+
+fn bad_request_with_error(error: &'static str) -> Result {
+    Ok(json_builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body(resp::Error { error }.into())
+        .unwrap())
 }
 
 fn not_found() -> Result {
     Ok(builder()
         .status(StatusCode::NOT_FOUND)
-        .body(Body::empty())?)
-}
-
-fn internal_server_error() -> Result {
-    Ok(builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(Body::empty())?)
+        .body(Body::empty())
+        .unwrap())
 }

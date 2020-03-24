@@ -14,43 +14,57 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::common::*;
-use crate::session::Message;
-use futures::channel::mpsc::Sender;
+use crate::session::Session;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// `Sessions` maps `SessionId` to a channel which can be used to communicate
-/// with the intended `Session`.
 #[derive(Clone)]
 pub struct Sessions {
-    sessions: Arc<RwLock<HashMap<SessionId, Sender<Message>>>>,
+    inner: Arc<RwLock<SessionsInner>>,
+}
+
+struct SessionsInner {
+    sessions: HashMap<SessionId, Session>,
+}
+
+impl SessionsInner {
+    fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+        }
+    }
 }
 
 impl Sessions {
     pub fn new() -> Self {
         Self {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            inner: Arc::new(RwLock::new(SessionsInner::new())),
         }
     }
 
-    pub async fn get(&self, id: &SessionId) -> Option<Sender<Message>> {
-        // We clone the channel so that the read lock can be released
-        // immediately.
-        self.sessions.read().await.get(id).map(|s| s.clone())
+    pub async fn get(&self, id: &SessionId) -> Option<Session> {
+        self.inner.read().await.sessions.get(id).cloned()
     }
 
-    pub async fn insert(&self, id: SessionId, session: Sender<Message>) {
-        self.sessions.write().await.insert(id, session);
+    pub async fn insert(&self, id: SessionId, session: Session) {
+        self.inner.write().await.sessions.insert(id, session);
     }
 
-    /// Removes the channel associated with `SessionId` and closes the channel.
     pub async fn remove(&self, id: &SessionId) {
-        self.sessions
-            .write()
-            .await
-            .remove(id)
-            .iter_mut()
-            .for_each(|tx| tx.close_channel());
+        self.inner.write().await.sessions.remove(id);
+    }
+
+    pub async fn garbage_collect(&self) {
+        let mut marked: Vec<SessionId> = Vec::with_capacity(0);
+        let sessions = &mut self.inner.write().await.sessions;
+        for (sid, s) in sessions.iter() {
+            if !s.with(|s| s.is_alive()).await {
+                marked.push(sid.clone());
+            }
+        }
+        for sid in marked {
+            sessions.remove(&sid);
+        }
     }
 }

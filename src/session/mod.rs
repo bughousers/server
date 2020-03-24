@@ -13,350 +13,391 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-#![allow(unused_must_use)]
-
 mod utils;
 
 use crate::common::*;
-use crate::dispatcher::Message as DispatcherMessage;
-use crate::dispatcher::MessageError as DispatcherMessageError;
+use crate::dispatcher::Error;
 use bughouse_rs::infoCourier::infoCourier::gen_yfen;
-use bughouse_rs::logic::ChessLogic;
-use futures::channel::mpsc;
-use futures::stream::StreamExt;
+use bughouse_rs::logic::{ChessLogic, Winner};
+use futures::lock::{Mutex, MutexGuard};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
-use tokio::sync::oneshot::Sender;
+use tokio::time::delay_for;
 
-const BROADCAST_CHANNEL_CAPACITY: usize = 10;
-const CHANNEL_CAPACITY: usize = 5;
-const MAP_START_CAPACITY: usize = 4;
-const MAX_NUM_OF_FAILED_BROADCASTS: usize = 20;
+const BROADCAST_CHANNEL_CAPACITY: usize = 5;
+const BROADCAST_INTERVAL: Duration = Duration::from_secs(20);
+const BROADCAST_MAX_FAILURE: usize = 20;
+const GAME_DURATION: Duration = Duration::from_secs(300);
 const MAX_NUM_OF_PARTICIPANTS: usize = 5;
 const MAX_NUM_OF_USERS: usize = std::u8::MAX as usize + 1;
+const TICK: Duration = Duration::from_secs(2);
+const ZERO_SECS: Duration = Duration::from_secs(0);
 
-/// Enum of message types which `Session` can handle.
-#[derive(Debug)]
-pub enum Message {
-    Request(Request, Sender<DispatcherMessage>),
-    Subscribe(Sender<broadcast::Receiver<String>>),
-}
-
-/// Session data.
+#[derive(Clone)]
 pub struct Session {
-    users: HashMap<UserId, User>,
-    user_ids: HashMap<AuthToken, UserId>,
-    queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
-    logic: ChessLogic,
-    match_id: usize,
-    started: bool,
-    broadcast_tx: broadcast::Sender<String>,
-    failed_broadcasts: usize,
+    inner: Arc<Mutex<SessionInner>>,
 }
 
 impl Session {
-    pub fn new(owner_name: &str) -> Result<Session, &str> {
-        if !utils::is_valid_user_name(owner_name) {
-            return Err("User name contains illegal characters.");
-        }
-        let (tx, _) = broadcast::channel(BROADCAST_CHANNEL_CAPACITY);
-        Ok(Self {
-            users: HashMap::with_capacity(MAP_START_CAPACITY),
-            user_ids: HashMap::with_capacity(MAP_START_CAPACITY),
-            queue: VecDeque::with_capacity(0),
-            logic: ChessLogic::new(),
-            match_id: 0,
-            started: false,
-            broadcast_tx: tx,
-            failed_broadcasts: 0,
-        })
+    pub fn new(owner_name: &str) -> Option<(Session, AuthToken)> {
+        let (inner, auth_token) = SessionInner::new(owner_name)?;
+        Some((
+            Self {
+                inner: Arc::new(Mutex::new(inner)),
+            },
+            auth_token,
+        ))
     }
 
-    pub fn spawn(mut self) -> mpsc::Sender<Message> {
-        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+    pub async fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(MutexGuard<SessionInner>) -> R,
+    {
+        let inner = self.inner.lock().await;
+        f(inner)
+    }
+
+    pub fn tick(&self) {
+        let session = self.clone();
         tokio::spawn(async move {
-            while let Some(msg) = rx.next().await {
-                handle(&mut self, msg).await;
+            let mut i = ZERO_SECS;
+            loop {
+                delay_for(TICK).await;
+                i += TICK;
+                session.with(|mut s| s.check_end_conditions()).await;
+                if i >= BROADCAST_INTERVAL {
+                    let is_alive = session.with(|mut s| s.notify_all()).await;
+                    if !is_alive {
+                        break;
+                    }
+                    i = ZERO_SECS;
+                }
             }
         });
-        tx
-    }
-
-    async fn notify_all(&mut self) {
-        let json = serde_json::to_string(&Event {
-            users: self.users.values().map(|u| u.clone()).collect(),
-            board: gen_yfen(&self.logic),
-            started: self.started,
-        })
-        .expect("Serialization failed");
-        // Keep in mind that a broadcast only fails when **nobody** receives the
-        // message.
-        if self.broadcast_tx.send(json).is_ok() {
-            self.failed_broadcasts = 0;
-        } else {
-            self.failed_broadcasts += 1;
-        }
-        // Clearly, no one is listening. The session can be deleted.
-        // if self.failed_broadcasts >= MAX_NUM_OF_FAILED_BROADCASTS {
-        //     self.parent_handle
-        //         .send(RegistryMessage::Deregister(self.id.clone()))
-        //         .await
-        //         .expect("Registry channel is closed");
-        // }
     }
 }
 
-async fn handle(s: &mut Session, msg: Message) {
-    match msg {
-        Message::Request(req, tx) => handle_request(s, req, tx).await,
-        Message::Subscribe(tx) => {
-            tx.send(s.broadcast_tx.subscribe());
-        }
-    }
-}
-
-async fn handle_request(s: &mut Session, req: Request, tx: Sender<DispatcherMessage>) {
-    match req {
-        Request::Authenticated { auth_token, data } => {
-            handle_authenticated(s, auth_token, data, tx).await
-        }
-        Request::Connect {
-            session_id,
-            user_name,
-        } => handle_connect(s, session_id, user_name, tx).await,
-        Request::Create { user_name } => handle_create(s, user_name, tx).await,
-    }
-}
-
-async fn handle_authenticated(
-    s: &mut Session,
-    auth_token: AuthToken,
-    data: Authenticated,
-    tx: Sender<DispatcherMessage>,
-) {
-    if let Some(user_id) = s.user_ids.get(&auth_token) {
-        // We have to dereference `user_id` first, otherwise the borrow checker
-        // won't let us borrow `s`.
-        let user_id = *user_id;
-        match data {
-            Authenticated::DeployPiece { piece, pos } => {
-                handle_deploy_piece(s, user_id, piece, pos, tx).await
-            }
-            Authenticated::MovePiece { change } => handle_move_piece(s, user_id, change, tx).await,
-            Authenticated::Reconnect => handle_reconnect(s, user_id, tx).await,
-            Authenticated::SetParticipants { participants } => {
-                handle_set_participants(s, user_id, participants, tx).await
-            }
-            Authenticated::Start => handle_start(s, user_id, tx).await,
-        }
-    } else {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::AuthTokenInvalid,
-        ));
-    }
-}
-
-async fn handle_connect(
-    s: &mut Session,
-    session_id: SessionId,
-    user_name: String,
-    tx: Sender<DispatcherMessage>,
-) {
-    let user_id = s.user_ids.len();
-    if user_id >= MAX_NUM_OF_USERS {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::TooManyUsers,
-        ));
-        return;
-    }
-    let user_id = UserId::new(user_id as u8);
-    let user = User::new(user_id, user_name);
-    let auth_token = AuthToken::new();
-    s.users.insert(user_id, user.clone());
-    s.user_ids.insert(auth_token.clone(), user_id);
-    tx.send(DispatcherMessage::Response(Response::Connected {
-        user,
-        auth_token,
-    }));
-    s.notify_all().await;
-}
-
-async fn handle_create(s: &mut Session, user_name: String, tx: Sender<DispatcherMessage>) {
-    let user_id = UserId::new(0);
-    let user = User::new(user_id, user_name);
-    let auth_token = AuthToken::new();
-    s.users.insert(user_id, user);
-    s.user_ids.insert(auth_token.clone(), user_id);
-    tx.send(DispatcherMessage::Response(Response::Created {
-        auth_token,
-    }));
-}
-
-async fn handle_deploy_piece(
-    s: &mut Session,
-    user_id: UserId,
-    piece: String,
-    pos: String,
-    tx: Sender<DispatcherMessage>,
-) {
-    if !s.started {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::PreconditionFailure,
-        ));
-        return;
-    }
-    let user = s
-        .users
-        .get(&user_id)
-        .expect("User ID is not associated with any user");
-    if let UserStatus::Active(b1, w) = user.status {
-        let pos = utils::parse_pos(&pos);
-        let piece = utils::parse_piece(&piece);
-        if let (Some((col, row)), Some(piece)) = (pos, piece) {
-            if s.logic.deploy_piece(b1, w, piece, row, col) {
-                tx.send(DispatcherMessage::Response(Response::Success));
-                s.notify_all().await;
-            } else {
-                tx.send(DispatcherMessage::Error(
-                    DispatcherMessageError::PreconditionFailure,
-                ));
-            }
-        } else {
-            tx.send(DispatcherMessage::Error(
-                DispatcherMessageError::CannotParse,
-            ));
-        }
-    } else {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::PreconditionFailure,
-        ));
-    }
-}
-
-async fn handle_move_piece(
-    s: &mut Session,
-    user_id: UserId,
-    change: String,
-    tx: Sender<DispatcherMessage>,
-) {
-    if !s.started {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::PreconditionFailure,
-        ));
-        return;
-    }
-    let user = s
-        .users
-        .get(&user_id)
-        .expect("User ID is not associated with any user");
-    if let UserStatus::Active(b1, w) = user.status {
-        let is_whites_turn = if b1 {
-            s.logic.white_active_1
-        } else {
-            s.logic.white_active_2
-        };
-        if is_whites_turn == w {
-            let [i, j, i_new, j_new] = utils::parse_change(&change);
-            if s.logic.movemaker(b1, i, j, i_new, j_new) {
-                tx.send(DispatcherMessage::Response(Response::Success));
-                s.notify_all().await;
-            } else {
-                tx.send(DispatcherMessage::Error(
-                    DispatcherMessageError::PreconditionFailure,
-                ));
-            }
-        }
-    } else {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::PreconditionFailure,
-        ));
-    }
-}
-
-async fn handle_reconnect(s: &mut Session, user_id: UserId, tx: Sender<DispatcherMessage>) {
-    let user = s
-        .users
-        .get(&user_id)
-        .expect("User ID is not associated with any user")
-        .clone();
-    // tx.send(DispatcherMessage::Response(Response::Reconnected {
-    //     session_id: s.id.clone(),
-    //     user,
-    // }));
-}
-
-async fn handle_set_participants(
-    s: &mut Session,
-    user_id: UserId,
+#[derive(Serialize)]
+pub struct SessionInner {
+    #[serde(skip_serializing)]
+    user_ids: HashMap<AuthToken, UserId>,
+    user_names: HashMap<UserId, String>,
+    score: HashMap<UserId, usize>,
     participants: Vec<UserId>,
-    tx: Sender<DispatcherMessage>,
-) {
-    if user_id != UserId::OWNER {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::MustBeSessionOwner,
-        ));
-        return;
-    } else if s.match_id != 0
-        || s.started
-        || participants.iter().any(|uid| !s.users.contains_key(uid))
-    {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::PreconditionFailure,
-        ));
-        return;
-    }
-    for uid in participants {
-        s.users.get_mut(&uid).unwrap().status = UserStatus::Inactive;
-    }
-    tx.send(DispatcherMessage::Response(Response::Success));
-    s.notify_all().await;
+    active_participants: Option<((UserId, UserId), (UserId, UserId))>,
+    #[serde(skip_serializing)]
+    queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
+    #[serde(skip_serializing)]
+    clock: Option<((Instant, Instant), (Instant, Instant))>,
+    remaining_time: ((Duration, Duration), (Duration, Duration)),
+    #[serde(skip_serializing)]
+    logic: ChessLogic,
+    game_id: usize,
+    #[serde(skip_serializing)]
+    broadcast_tx: broadcast::Sender<String>,
+    #[serde(skip_serializing)]
+    failed_broadcasts: usize,
 }
 
-async fn handle_start(s: &mut Session, user_id: UserId, tx: Sender<DispatcherMessage>) {
-    if user_id != UserId::OWNER {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::MustBeSessionOwner,
-        ));
-        return;
+impl SessionInner {
+    pub fn new(owner_name: &str) -> Option<(SessionInner, AuthToken)> {
+        if !utils::is_valid_user_name(owner_name) {
+            return None;
+        }
+        let (tx, _) = broadcast::channel(BROADCAST_CHANNEL_CAPACITY);
+        let mut session = Self {
+            user_ids: HashMap::with_capacity(0),
+            user_names: HashMap::with_capacity(0),
+            score: HashMap::with_capacity(0),
+            participants: Vec::with_capacity(0),
+            active_participants: None,
+            queue: VecDeque::with_capacity(0),
+            clock: None,
+            remaining_time: (
+                (GAME_DURATION, GAME_DURATION),
+                (GAME_DURATION, GAME_DURATION),
+            ),
+            logic: ChessLogic::new(),
+            game_id: 0,
+            broadcast_tx: tx,
+            failed_broadcasts: 0,
+        };
+        let (_, auth_token) = session.add_user(owner_name).ok()?;
+        Some((session, auth_token))
     }
-    if s.started {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::PreconditionFailure,
-        ));
-        return;
+
+    pub fn get_user_id(&self, auth_token: &AuthToken) -> Option<UserId> {
+        self.user_ids.get(auth_token).cloned()
     }
-    let participants: Vec<UserId> = s
-        .users
-        .iter()
-        .filter(|&(_, u)| u.is_participant())
-        .map(|(&uid, _)| uid)
-        .collect();
-    if participants.len() < 4 || participants.len() > 5 {
-        tx.send(DispatcherMessage::Error(
-            DispatcherMessageError::PreconditionFailure,
-        ));
-        return;
+
+    pub fn get_user_name(&self, user_id: &UserId) -> Option<&String> {
+        self.user_names.get(user_id)
     }
-    let pairings = utils::create_pairings(participants.len() as u8);
-    s.queue = pairings
-        .iter()
-        .map(|&((a, b), (c, d))| {
-            (
-                (participants[a as usize], participants[b as usize]),
-                (participants[c as usize], participants[d as usize]),
-            )
-        })
-        .collect();
-    let first = s.queue.pop_front();
-    if let Some(first) = first {
-        let ((a, b), (c, d)) = first;
-        s.users.get_mut(&a).unwrap().status = UserStatus::Active(true, true);
-        s.users.get_mut(&b).unwrap().status = UserStatus::Active(false, false);
-        s.users.get_mut(&c).unwrap().status = UserStatus::Active(true, false);
-        s.users.get_mut(&d).unwrap().status = UserStatus::Active(false, true);
-        s.started = true;
-        tx.send(DispatcherMessage::Response(Response::Success));
-        s.notify_all().await;
+
+    pub fn add_user(&mut self, name: &str) -> Result<(UserId, AuthToken), Error> {
+        if !utils::is_valid_user_name(name) {
+            return Err(Error::InvalidUserName);
+        }
+        let user_id = self.user_ids.len();
+        if user_id >= MAX_NUM_OF_USERS {
+            return Err(Error::TooManyUsers);
+        }
+        let user_id = UserId::new(user_id as u8);
+        let auth_token = AuthToken::new();
+        self.user_ids.insert(auth_token.clone(), user_id);
+        self.user_names.insert(user_id, name.to_owned());
+        self.notify_all();
+        Ok((user_id, auth_token))
     }
+
+    fn is_owner(&self, auth_token: &AuthToken) -> bool {
+        let user_id = self.get_user_id(auth_token);
+        if let Some(user_id) = user_id {
+            user_id == UserId::OWNER
+        } else {
+            false
+        }
+    }
+
+    pub fn set_participants(
+        &mut self,
+        auth_token: &AuthToken,
+        participants: Vec<UserId>,
+    ) -> Result<(), Error> {
+        if self.game_id != 0 || self.active_participants.is_some() {
+            return Err(Error::GameHasAlreadyStarted);
+        } else if !self.is_owner(auth_token) {
+            return Err(Error::MustBeSessionOwner);
+        } else if participants
+            .iter()
+            .any(|p| self.user_names.get(p).is_none())
+        {
+            return Err(Error::InvalidParticipantList);
+        }
+        self.participants = participants;
+        self.notify_all();
+        Ok(())
+    }
+
+    pub fn start(&mut self, auth_token: &AuthToken) -> Result<(), Error> {
+        if self.active_participants.is_some() {
+            return Err(Error::GameHasAlreadyStarted);
+        } else if !self.is_owner(auth_token) {
+            return Err(Error::MustBeSessionOwner);
+        } else if self.participants.len() < 4 {
+            return Err(Error::NotEnoughParticipants);
+        } else if self.participants.len() > MAX_NUM_OF_PARTICIPANTS {
+            return Err(Error::TooManyParticipants);
+        }
+        if self.game_id == 0 {
+            let pairings = utils::create_pairings(self.participants.len() as u8);
+            self.queue = pairings
+                .iter()
+                .map(|&((a, b), (c, d))| {
+                    (
+                        (
+                            self.participants[(a - 1) as usize],
+                            self.participants[(b - 1) as usize],
+                        ),
+                        (
+                            self.participants[(c - 1) as usize],
+                            self.participants[(d - 1) as usize],
+                        ),
+                    )
+                })
+                .collect();
+        }
+        let active_participants = self.queue.pop_front().ok_or(Error::SessionHasEnded)?;
+        self.active_participants = Some(active_participants);
+        self.notify_all();
+        self.reset();
+        Ok(())
+    }
+
+    fn get_board_and_color(&self, user_id: &UserId) -> Option<(bool, bool)> {
+        let ((a, b), (c, _)) = self.active_participants?;
+        if a == *user_id {
+            Some((true, true))
+        } else if b == *user_id {
+            Some((false, false))
+        } else if c == *user_id {
+            Some((true, false))
+        } else {
+            Some((false, true))
+        }
+    }
+
+    // Run after each successful move.
+    fn update_clocks(&mut self, b1: bool) {
+        let now = Instant::now();
+        if let Some(((c1, c2), (c3, c4))) = &mut self.clock {
+            let ((r1, r2), (r3, r4)) = &mut self.remaining_time;
+            if b1 {
+                if self.logic.white_active_1 {
+                    *c1 = now;
+                    *r3 -= now - *c3;
+                } else {
+                    *c3 = now;
+                    *r1 -= now - *c1;
+                }
+            } else {
+                if self.logic.white_active_2 {
+                    *c4 = now;
+                    *r2 -= now - *c2;
+                } else {
+                    *c2 = now;
+                    *r4 -= now - *c4;
+                }
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.logic.refresh();
+        let now = Instant::now();
+        self.clock = Some(((now, now), (now, now)));
+    }
+
+    pub fn deploy_piece(
+        &mut self,
+        auth_token: &AuthToken,
+        piece: String,
+        pos: String,
+    ) -> Result<(), Error> {
+        if self.active_participants.is_none() {
+            return Err(Error::GameHasNotStartedYet);
+        }
+        let user_id = self
+            .user_ids
+            .get(auth_token)
+            .ok_or(Error::InvalidAuthToken)?;
+        let (b1, w) = self
+            .get_board_and_color(user_id)
+            .ok_or(Error::NotAnActiveParticipant)?;
+        let piece = utils::parse_piece(&piece).ok_or(Error::CannotParse)?;
+        let (col, row) = utils::parse_pos(&pos).ok_or(Error::CannotParse)?;
+        if !self.logic.deploy_piece(b1, w, piece, row, col) {
+            return Err(Error::IllegalMove);
+        } else {
+            self.notify_all();
+            self.update_clocks(b1);
+            self.check_end_conditions();
+        }
+        Ok(())
+    }
+
+    pub fn move_piece(&mut self, auth_token: &AuthToken, change: String) -> Result<(), Error> {
+        if self.active_participants.is_none() {
+            return Err(Error::GameHasNotStartedYet);
+        }
+        let user_id = self
+            .user_ids
+            .get(auth_token)
+            .ok_or(Error::InvalidAuthToken)?;
+        let (b1, w) = self
+            .get_board_and_color(user_id)
+            .ok_or(Error::NotAnActiveParticipant)?;
+        let is_whites_turn = if b1 {
+            self.logic.white_active_1
+        } else {
+            self.logic.white_active_2
+        };
+        if is_whites_turn != w {
+            return Err(Error::IllegalMove);
+        }
+        let [i, j, i_new, j_new] = utils::parse_change(&change);
+        if !self.logic.movemaker(b1, i, j, i_new, j_new) {
+            return Err(Error::IllegalMove);
+        } else {
+            self.notify_all();
+            self.update_clocks(b1);
+            self.check_end_conditions();
+        }
+        Ok(())
+    }
+
+    fn get_winner(&self) -> Option<Winner> {
+        if self.active_participants.is_none() {
+            return None;
+        }
+        if let Some(((c1, c2), (c3, c4))) = self.clock {
+            let ((r1, r2), (r3, r4)) = self.remaining_time;
+            let now = Instant::now();
+            if self.logic.white_active_1 && now - c1 > r1 {
+                return Some(Winner::B1);
+            } else if !self.logic.white_active_1 && now - c3 > r3 {
+                return Some(Winner::W1);
+            } else if self.logic.white_active_2 && now - c4 > r4 {
+                return Some(Winner::B2);
+            } else if !self.logic.white_active_2 && now - c2 > r2 {
+                return Some(Winner::W2);
+            } else {
+                Some(self.logic.get_winner(true))
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn check_end_conditions(&mut self) {
+        if let Some(((u1, u2), (u3, u4))) = self.active_participants {
+            let winner = self.get_winner();
+            match winner {
+                Some(Winner::W1) | Some(Winner::B2) => {
+                    self.score
+                        .insert(u1, *self.score.get(&u1).unwrap_or(&0) + 1);
+                    self.score
+                        .insert(u2, *self.score.get(&u2).unwrap_or(&0) + 1);
+                    self.active_participants = None;
+                    self.notify_all();
+                }
+                Some(Winner::B1) | Some(Winner::W2) => {
+                    self.score
+                        .insert(u3, *self.score.get(&u3).unwrap_or(&0) + 1);
+                    self.score
+                        .insert(u4, *self.score.get(&u4).unwrap_or(&0) + 1);
+                    self.active_participants = None;
+                    self.notify_all();
+                }
+                Some(Winner::P) => {
+                    self.active_participants = None;
+                    self.notify_all();
+                }
+                _ => (),
+            }
+        }
+    }
+
+    pub fn subscribe(&mut self) -> broadcast::Receiver<String> {
+        self.broadcast_tx.subscribe()
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.failed_broadcasts <= BROADCAST_MAX_FAILURE
+    }
+
+    pub fn notify_all(&mut self) -> bool {
+        let board = gen_yfen(&self.logic);
+        let ev = Event {
+            session: self,
+            board,
+        };
+        let ev = format!("data: {}\n\n", serde_json::to_string(&ev).unwrap());
+        match self.broadcast_tx.send(ev) {
+            Ok(_) => self.failed_broadcasts = 0,
+            _ => self.failed_broadcasts += 1,
+        }
+        self.is_alive()
+    }
+}
+
+#[derive(Serialize)]
+struct Event<'a> {
+    #[serde(flatten)]
+    session: &'a SessionInner,
+    board: (String, String),
 }
