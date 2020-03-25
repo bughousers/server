@@ -18,26 +18,20 @@ mod dispatcher;
 mod session;
 mod sessions;
 
-use dispatcher::dispatch;
+use dispatcher::{dispatch, BoxError};
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Error, Response, Result, Server};
+use hyper::Server;
 use sessions::Sessions;
-use std::time::Duration;
 
-const GC_INTERVAL: Duration = Duration::from_secs(900);
 pub const LISTEN_ADDR: &'static str = "0.0.0.0:8080";
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), BoxError> {
     let sessions = Sessions::new();
-    let sessions2 = sessions.clone();
-    tokio::spawn(async move {
-        tokio::time::delay_for(GC_INTERVAL).await;
-        sessions2.garbage_collect().await;
-    });
+    sessions.garbage_collect().await;
     let make_svc = make_service_fn(|_| {
         let sessions = sessions.clone();
-        async { Ok::<_, Error>(service_fn(move |req| dispatch(sessions.clone(), req))) }
+        async { Ok::<_, BoxError>(service_fn(move |req| dispatch(sessions.clone(), req))) }
     });
     Server::bind(&LISTEN_ADDR.parse().unwrap())
         .serve(make_svc)

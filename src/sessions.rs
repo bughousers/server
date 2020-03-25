@@ -14,10 +14,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::common::*;
-use crate::session::Session;
+use crate::session::{Msg, Session};
+use futures::channel::mpsc;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
+
+const GC_INTERVAL: Duration = Duration::from_secs(900);
 
 #[derive(Clone)]
 pub struct Sessions {
@@ -25,7 +29,7 @@ pub struct Sessions {
 }
 
 struct SessionsInner {
-    sessions: HashMap<SessionId, Session>,
+    sessions: HashMap<SessionId, mpsc::Sender<Msg>>,
 }
 
 impl SessionsInner {
@@ -43,28 +47,38 @@ impl Sessions {
         }
     }
 
-    pub async fn get(&self, id: &SessionId) -> Option<Session> {
+    pub async fn get(&self, id: &SessionId) -> Option<mpsc::Sender<Msg>> {
         self.inner.read().await.sessions.get(id).cloned()
     }
 
-    pub async fn insert(&self, id: SessionId, session: Session) {
-        self.inner.write().await.sessions.insert(id, session);
-    }
-
-    pub async fn remove(&self, id: &SessionId) {
-        self.inner.write().await.sessions.remove(id);
+    pub async fn spawn(&self, owner_name: &str) -> Option<mpsc::Sender<Msg>> {
+        let session_id = SessionId::new();
+        let (session, tx) = Session::new(session_id.clone(), owner_name)?;
+        session.spawn();
+        self.inner
+            .write()
+            .await
+            .sessions
+            .insert(session_id, tx.clone());
+        Some(tx)
     }
 
     pub async fn garbage_collect(&self) {
-        let mut marked: Vec<SessionId> = Vec::with_capacity(0);
-        let sessions = &mut self.inner.write().await.sessions;
-        for (sid, s) in sessions.iter() {
-            if !s.with(|s| s.is_alive()).await {
-                marked.push(sid.clone());
+        let s = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::delay_for(GC_INTERVAL).await;
+                let mut marked: Vec<SessionId> = Vec::with_capacity(0);
+                let sessions = &mut s.inner.write().await.sessions;
+                for (sid, s) in sessions.iter() {
+                    if s.is_closed() {
+                        marked.push(sid.clone());
+                    }
+                }
+                for sid in marked {
+                    sessions.remove(&sid);
+                }
             }
-        }
-        for sid in marked {
-            sessions.remove(&sid);
-        }
+        });
     }
 }
