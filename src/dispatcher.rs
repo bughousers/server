@@ -187,24 +187,10 @@ fn accepted() -> Result {
         .unwrap())
 }
 
-fn no_content() -> Result {
-    Ok(builder()
-        .status(StatusCode::NO_CONTENT)
-        .body(Body::empty())
-        .unwrap())
-}
-
 fn bad_request() -> Result {
     Ok(builder()
         .status(StatusCode::BAD_REQUEST)
         .body(Body::empty())
-        .unwrap())
-}
-
-fn bad_request_with_error(error: &'static str) -> Result {
-    Ok(json_builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(resp::Error { error }.into())
         .unwrap())
 }
 

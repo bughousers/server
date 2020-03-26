@@ -49,17 +49,3 @@ impl Into<Body> for Joined {
         Body::from(json)
     }
 }
-
-/// `Err` is sent when the server fails to fulfill a user request.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Error {
-    pub error: &'static str,
-}
-
-impl Into<Body> for Error {
-    fn into(self) -> Body {
-        let json = serde_json::to_string(&self).unwrap();
-        Body::from(json)
-    }
-}
