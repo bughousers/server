@@ -180,11 +180,12 @@ async fn handle_deploy(
     let (b1, w) = game.board_and_color(user_id).ok_or(())?;
     let piece = utils::parse_piece(&piece).ok_or(())?;
     let (col, row) = utils::parse_pos(&pos).ok_or(())?;
-    if game.logic.deploy_piece(b1, w, piece, row, col).is_err() {
-        return Err(());
-    }
+    game.update_clock();
+    game.logic
+        .deploy_piece(b1, w, piece, row, col)
+        .or(Err(()))?;
+    s.check_end_conditions();
     s.notify_all();
-    s.tick();
     Ok(())
 }
 
@@ -197,11 +198,10 @@ async fn handle_move(s: &mut Session, auth_token: AuthToken, change: String) -> 
         return Err(());
     }
     let [i, j, i_new, j_new] = utils::parse_change(&change);
-    if game.logic.movemaker(b1, i, j, i_new, j_new).is_err() {
-        return Err(());
-    }
+    game.update_clock();
+    game.logic.movemaker(b1, i, j, i_new, j_new).or(Err(()))?;
+    s.check_end_conditions();
     s.notify_all();
-    s.tick();
     Ok(())
 }
 
