@@ -242,6 +242,19 @@ impl Game {
         *c2 = now;
     }
 
+    fn add_time(&mut self, user_id: &UserId, time: Duration) {
+        if let Some(board_and_color) = self.board_and_color(&user_id) {
+            let ((r1, r2), (r3, r4)) = &mut self.remaining_time;
+            let rem = match board_and_color {
+                (true, true) => r1,
+                (false, false) => r2,
+                (true, false) => r3,
+                (false, true) => r4,
+            };
+            *rem = *rem + time;
+        }
+    }
+
     fn winner(&self) -> Winner {
         let ((r1, r2), (r3, r4)) = self.remaining_time;
         if self.logic.get_white_active(true) && r1 == ZERO_SECS {

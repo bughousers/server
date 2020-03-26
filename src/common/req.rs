@@ -79,6 +79,13 @@ pub enum Board {
         auth_token: AuthToken,
         change: String,
     },
+    /// The user wants to make a move that will result in upgrade of a piece.
+    #[serde(rename_all = "camelCase")]
+    Promote {
+        auth_token: AuthToken,
+        change: String,
+        upgrade_to: String,
+    },
 }
 
 /// `Participants` is received when the session owner wants to modify the list

@@ -20,9 +20,12 @@ use crate::common::req::*;
 use crate::common::resp::*;
 use crate::common::*;
 use futures::channel::oneshot;
+use std::time::Duration;
 use tokio::sync::broadcast;
 
 type Result = std::result::Result<(), ()>;
+
+const PROMOTION_ADDED_TIME: Duration = Duration::from_secs(3);
 
 pub enum Msg {
     C(Create, oneshot::Sender<Created>),
@@ -117,6 +120,11 @@ async fn handle_board(s: &mut Session, req: Board) -> Result {
             pos,
         } => handle_deploy(s, auth_token, piece, pos).await,
         Board::Move { auth_token, change } => handle_move(s, auth_token, change).await,
+        Board::Promote {
+            auth_token,
+            change,
+            upgrade_to,
+        } => handle_promote(s, auth_token, change, upgrade_to).await,
     }
 }
 
@@ -200,6 +208,30 @@ async fn handle_move(s: &mut Session, auth_token: AuthToken, change: String) -> 
     let [i, j, i_new, j_new] = utils::parse_change(&change);
     game.update_clock();
     game.logic.movemaker(b1, i, j, i_new, j_new).or(Err(()))?;
+    s.check_end_conditions();
+    s.notify_all();
+    Ok(())
+}
+
+async fn handle_promote(
+    s: &mut Session,
+    auth_token: AuthToken,
+    change: String,
+    upgrade_to: String,
+) -> Result {
+    let game = s.game.as_mut().ok_or(())?;
+    let user_id = s.user_ids.get(&auth_token).ok_or(())?;
+    let (b1, w) = game.board_and_color(user_id).ok_or(())?;
+    let is_whites_turn = game.logic.get_white_active(b1);
+    if is_whites_turn != w {
+        return Err(());
+    }
+    let [i, j, i_new, j_new] = utils::parse_change(&change);
+    let upgrade_to = utils::parse_piece(&upgrade_to).ok_or(())?;
+    game.logic.set_promotion(b1, upgrade_to);
+    game.update_clock();
+    game.logic.movemaker(b1, i, j, i_new, j_new).or(Err(()))?;
+    game.add_time(user_id, PROMOTION_ADDED_TIME);
     s.check_end_conditions();
     s.notify_all();
     Ok(())
