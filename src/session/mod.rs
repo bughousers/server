@@ -37,6 +37,7 @@ const GAME_DURATION: Duration = Duration::from_secs(300);
 const MAX_NUM_OF_PARTICIPANTS: usize = 5;
 const MAX_NUM_OF_USERS: usize = std::u8::MAX as usize + 1;
 const TICK: Duration = Duration::from_secs(2);
+const ZERO_SECS: Duration = Duration::from_secs(0);
 
 #[derive(Serialize)]
 pub struct Session {
@@ -48,15 +49,11 @@ pub struct Session {
     user_names: HashMap<UserId, String>,
     score: HashMap<UserId, usize>,
     participants: Vec<UserId>,
-    active_participants: Option<((UserId, UserId), (UserId, UserId))>,
     #[serde(skip_serializing)]
     queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
-    #[serde(skip_serializing)]
-    clock: Option<((Instant, Instant), (Instant, Instant))>,
-    remaining_time: ((Duration, Duration), (Duration, Duration)),
-    #[serde(skip_serializing)]
-    logic: ChessLogic,
     game_id: usize,
+    #[serde(flatten)]
+    game: Option<Game>,
     #[serde(skip_serializing)]
     broadcast_tx: broadcast::Sender<String>,
     #[serde(skip_serializing)]
@@ -77,15 +74,9 @@ impl Session {
             user_names: HashMap::with_capacity(0),
             score: HashMap::with_capacity(0),
             participants: Vec::with_capacity(0),
-            active_participants: None,
             queue: VecDeque::with_capacity(0),
-            clock: None,
-            remaining_time: (
-                (GAME_DURATION, GAME_DURATION),
-                (GAME_DURATION, GAME_DURATION),
-            ),
-            logic: ChessLogic::new(),
             game_id: 0,
+            game: None,
             broadcast_tx,
             failed_broadcasts: 0,
         };
@@ -104,7 +95,7 @@ impl Session {
                             _ => break
                         }
                     },
-                    _ = timer.tick().fuse() => self.check_end_conditions(),
+                    _ = timer.tick().fuse() => self.tick(),
                     _ = broadcast_timer.tick().fuse() => self.notify_all()
                 }
             }
@@ -120,8 +111,100 @@ impl Session {
         }
     }
 
-    fn get_board_and_color(&self, user_id: &UserId) -> Option<(bool, bool)> {
-        let ((a, b), (c, d)) = self.active_participants?;
+    fn reset_game(&mut self, active_participants: ((UserId, UserId), (UserId, UserId))) {
+        self.game = Some(Game::new(active_participants));
+    }
+
+    fn tick(&mut self) {
+        self.game.as_mut().map(|g| g.update_clock());
+        self.check_end_conditions();
+    }
+
+    fn check_end_conditions(&mut self) {
+        if let Some(g) = self.game.as_ref() {
+            let ((u1, u2), (u3, u4)) = g.active_participants;
+            match g.winner() {
+                Winner::W1 | Winner::B2 => {
+                    self.score
+                        .insert(u1, *self.score.get(&u1).unwrap_or(&0) + 1);
+                    self.score
+                        .insert(u2, *self.score.get(&u2).unwrap_or(&0) + 1);
+                    self.game_id += 1;
+                    self.game = None;
+                    self.notify_all();
+                }
+                Winner::B1 | Winner::W2 => {
+                    self.score
+                        .insert(u3, *self.score.get(&u3).unwrap_or(&0) + 1);
+                    self.score
+                        .insert(u4, *self.score.get(&u4).unwrap_or(&0) + 1);
+                    self.game_id += 1;
+                    self.game = None;
+                    self.notify_all();
+                }
+                Winner::P => {
+                    self.game_id += 1;
+                    self.game = None;
+                    self.notify_all();
+                }
+                _ => (),
+            }
+        }
+    }
+
+    fn notify_all(&mut self) {
+        let ev = Event {
+            session: self,
+            board: self.game.as_ref().map(|g| gen_yfen(&g.logic)),
+        };
+        let ev = format!("data: {}\n\n", serde_json::to_string(&ev).unwrap());
+        match self.broadcast_tx.send(ev) {
+            Ok(_) => self.failed_broadcasts = 0,
+            _ => self.failed_broadcasts += 1,
+        }
+        if self.failed_broadcasts > BROADCAST_MAX_FAILURE {
+            self.rx.close();
+        }
+    }
+}
+
+/// `Game` holds game related data.
+#[derive(Serialize)]
+struct Game {
+    /// Active participants.
+    ///
+    /// Each `UserId` pair represents a team. Each user in a pair plays against
+    /// a user in the same position in the other pair. The player colors are as
+    /// follows: ((white, black), (black, white)).
+    active_participants: ((UserId, UserId), (UserId, UserId)),
+    /// For each board, we have a clock, which is used for recalculating the
+    /// remaining time of the currently active player. If the `bool` value is
+    /// `true`, the clock is paused.
+    #[serde(skip_serializing)]
+    clock: ((Instant, bool), (Instant, bool)),
+    /// Remaining time for each user. Follows the same order as
+    /// `active_participants`.
+    remaining_time: ((Duration, Duration), (Duration, Duration)),
+    #[serde(skip_serializing)]
+    logic: ChessLogic,
+}
+
+impl Game {
+    fn new(active_participants: ((UserId, UserId), (UserId, UserId))) -> Self {
+        let now = Instant::now();
+        Self {
+            active_participants,
+            clock: ((now, false), (now, false)),
+            remaining_time: (
+                (GAME_DURATION, GAME_DURATION),
+                (GAME_DURATION, GAME_DURATION),
+            ),
+            logic: ChessLogic::new(),
+        }
+    }
+
+    fn board_and_color(&self, user_id: &UserId) -> Option<(bool, bool)> {
+        let ((a, b), (c, d)) = self.active_participants;
         if a == *user_id {
             Some((true, true))
         } else if b == *user_id {
@@ -135,105 +218,42 @@ impl Session {
         }
     }
 
-    // Run after each successful move.
-    fn update_clocks(&mut self, b1: bool) {
-        let now = Instant::now();
-        if let Some(((c1, c2), (c3, c4))) = &mut self.clock {
-            let ((r1, r2), (r3, r4)) = &mut self.remaining_time;
-            if b1 {
-                if self.logic.get_white_active(b1) {
-                    *c1 = now;
-                    *r3 -= now - *c3;
-                } else {
-                    *c3 = now;
-                    *r1 -= now - *c1;
-                }
-            } else {
-                if self.logic.get_white_active(b1) {
-                    *c4 = now;
-                    *r2 -= now - *c2;
-                } else {
-                    *c2 = now;
-                    *r4 -= now - *c4;
-                }
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        let now = Instant::now();
-        self.clock = Some(((now, now), (now, now)));
-        self.remaining_time = (
-            (GAME_DURATION, GAME_DURATION),
-            (GAME_DURATION, GAME_DURATION),
-        );
-        self.logic.refresh();
-    }
-
-    fn get_winner(&self) -> Option<Winner> {
-        if self.active_participants.is_none() {
-            return None;
-        }
-        if let Some(((c1, c2), (c3, c4))) = self.clock {
-            let ((r1, r2), (r3, r4)) = self.remaining_time;
-            let now = Instant::now();
-            if self.logic.get_white_active(true) && now - c1 > r1 {
-                return Some(Winner::B1);
-            } else if !self.logic.get_white_active(true) && now - c3 > r3 {
-                return Some(Winner::W1);
-            } else if self.logic.get_white_active(false) && now - c4 > r4 {
-                return Some(Winner::B2);
-            } else if !self.logic.get_white_active(false) && now - c2 > r2 {
-                return Some(Winner::W2);
-            } else {
-                Some(self.logic.get_winner(true))
-            }
+    fn update_clock(&mut self) {
+        let ((c1, p1), (c2, p2)) = &mut self.clock;
+        let ((r1, r2), (r3, r4)) = &mut self.remaining_time;
+        let r1 = if self.logic.get_white_active(true) {
+            r1
         } else {
-            None
-        }
-    }
-
-    fn check_end_conditions(&mut self) {
-        if let Some(((u1, u2), (u3, u4))) = self.active_participants {
-            let winner = self.get_winner();
-            match winner {
-                Some(Winner::W1) | Some(Winner::B2) => {
-                    self.score
-                        .insert(u1, *self.score.get(&u1).unwrap_or(&0) + 1);
-                    self.score
-                        .insert(u2, *self.score.get(&u2).unwrap_or(&0) + 1);
-                    self.active_participants = None;
-                    self.notify_all();
-                }
-                Some(Winner::B1) | Some(Winner::W2) => {
-                    self.score
-                        .insert(u3, *self.score.get(&u3).unwrap_or(&0) + 1);
-                    self.score
-                        .insert(u4, *self.score.get(&u4).unwrap_or(&0) + 1);
-                    self.active_participants = None;
-                    self.notify_all();
-                }
-                Some(Winner::P) => {
-                    self.active_participants = None;
-                    self.notify_all();
-                }
-                _ => (),
-            }
-        }
-    }
-
-    fn notify_all(&mut self) {
-        let ev = Event {
-            session: self,
-            board: gen_yfen(&self.logic),
+            r3
         };
-        let ev = format!("data: {}\n\n", serde_json::to_string(&ev).unwrap());
-        match self.broadcast_tx.send(ev) {
-            Ok(_) => self.failed_broadcasts = 0,
-            _ => self.failed_broadcasts += 1,
+        let r2 = if self.logic.get_white_active(false) {
+            r4
+        } else {
+            r2
+        };
+        if !*p1 {
+            *r1 = r1.checked_sub(c1.elapsed()).unwrap_or(ZERO_SECS);
         }
-        if self.failed_broadcasts > BROADCAST_MAX_FAILURE {
-            self.rx.close();
+        if !*p2 {
+            *r2 = r2.checked_sub(c1.elapsed()).unwrap_or(ZERO_SECS);
+        }
+        let now = Instant::now();
+        *c1 = now;
+        *c2 = now;
+    }
+
+    fn winner(&self) -> Winner {
+        let ((r1, r2), (r3, r4)) = self.remaining_time;
+        if self.logic.get_white_active(true) && r1 == ZERO_SECS {
+            Winner::B1
+        } else if !self.logic.get_white_active(false) && r2 == ZERO_SECS {
+            Winner::W2
+        } else if !self.logic.get_white_active(true) && r3 == ZERO_SECS {
+            Winner::W1
+        } else if self.logic.get_white_active(false) && r4 == ZERO_SECS {
+            Winner::B2
+        } else {
+            self.logic.get_winner(true)
         }
     }
 }
@@ -242,5 +262,5 @@ impl Session {
 struct Event<'a> {
     #[serde(flatten)]
     session: &'a Session,
-    board: (String, String),
+    board: Option<(String, String)>,
 }

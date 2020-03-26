@@ -78,7 +78,7 @@ async fn handle_join(s: &mut Session, req: Join, tx: oneshot::Sender<Joined>) ->
 }
 
 async fn handle_start(s: &mut Session, req: Start) -> Result {
-    if s.active_participants.is_some()
+    if s.game.is_some()
         || !s.is_owner(&req.auth_token)
         || s.participants.len() < 4
         || s.participants.len() > MAX_NUM_OF_PARTICIPANTS
@@ -104,9 +104,8 @@ async fn handle_start(s: &mut Session, req: Start) -> Result {
             .collect();
     }
     let active_participants = s.queue.pop_front().ok_or(())?;
-    s.active_participants = Some(active_participants);
+    s.reset_game(active_participants);
     s.notify_all();
-    s.reset();
     Ok(())
 }
 
@@ -123,7 +122,7 @@ async fn handle_board(s: &mut Session, req: Board) -> Result {
 
 async fn handle_participants(s: &mut Session, req: Participants) -> Result {
     if s.game_id != 0
-        || s.active_participants.is_some()
+        || s.game.is_some()
         || !s.is_owner(&req.auth_token)
         || req
             .participants
@@ -176,39 +175,33 @@ async fn handle_deploy(
     piece: String,
     pos: String,
 ) -> Result {
-    if s.active_participants.is_none() {
-        return Err(());
-    }
     let user_id = s.user_ids.get(&auth_token).ok_or(())?;
-    let (b1, w) = s.get_board_and_color(user_id).ok_or(())?;
+    let game = s.game.as_mut().ok_or(())?;
+    let (b1, w) = game.board_and_color(user_id).ok_or(())?;
     let piece = utils::parse_piece(&piece).ok_or(())?;
     let (col, row) = utils::parse_pos(&pos).ok_or(())?;
-    if s.logic.deploy_piece(b1, w, piece, row, col).is_err() {
+    if game.logic.deploy_piece(b1, w, piece, row, col).is_err() {
         return Err(());
     }
     s.notify_all();
-    s.update_clocks(b1);
-    s.check_end_conditions();
+    s.tick();
     Ok(())
 }
 
 async fn handle_move(s: &mut Session, auth_token: AuthToken, change: String) -> Result {
-    if s.active_participants.is_none() {
-        return Err(());
-    }
+    let game = s.game.as_mut().ok_or(())?;
     let user_id = s.user_ids.get(&auth_token).ok_or(())?;
-    let (b1, w) = s.get_board_and_color(user_id).ok_or(())?;
-    let is_whites_turn = s.logic.get_white_active(b1);
+    let (b1, w) = game.board_and_color(user_id).ok_or(())?;
+    let is_whites_turn = game.logic.get_white_active(b1);
     if is_whites_turn != w {
         return Err(());
     }
     let [i, j, i_new, j_new] = utils::parse_change(&change);
-    if s.logic.movemaker(b1, i, j, i_new, j_new).is_err() {
+    if game.logic.movemaker(b1, i, j, i_new, j_new).is_err() {
         return Err(());
     }
     s.notify_all();
-    s.update_clocks(b1);
-    s.check_end_conditions();
+    s.tick();
     Ok(())
 }
 
