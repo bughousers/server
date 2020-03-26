@@ -141,7 +141,7 @@ impl Session {
         if let Some(((c1, c2), (c3, c4))) = &mut self.clock {
             let ((r1, r2), (r3, r4)) = &mut self.remaining_time;
             if b1 {
-                if self.logic.white_active_1 {
+                if self.logic.get_white_active(b1) {
                     *c1 = now;
                     *r3 -= now - *c3;
                 } else {
@@ -149,7 +149,7 @@ impl Session {
                     *r1 -= now - *c1;
                 }
             } else {
-                if self.logic.white_active_2 {
+                if self.logic.get_white_active(b1) {
                     *c4 = now;
                     *r2 -= now - *c2;
                 } else {
@@ -177,13 +177,13 @@ impl Session {
         if let Some(((c1, c2), (c3, c4))) = self.clock {
             let ((r1, r2), (r3, r4)) = self.remaining_time;
             let now = Instant::now();
-            if self.logic.white_active_1 && now - c1 > r1 {
+            if self.logic.get_white_active(true) && now - c1 > r1 {
                 return Some(Winner::B1);
-            } else if !self.logic.white_active_1 && now - c3 > r3 {
+            } else if !self.logic.get_white_active(true) && now - c3 > r3 {
                 return Some(Winner::W1);
-            } else if self.logic.white_active_2 && now - c4 > r4 {
+            } else if self.logic.get_white_active(false) && now - c4 > r4 {
                 return Some(Winner::B2);
-            } else if !self.logic.white_active_2 && now - c2 > r2 {
+            } else if !self.logic.get_white_active(false) && now - c2 > r2 {
                 return Some(Winner::W2);
             } else {
                 Some(self.logic.get_winner(true))

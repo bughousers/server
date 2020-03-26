@@ -183,7 +183,7 @@ async fn handle_deploy(
     let (b1, w) = s.get_board_and_color(user_id).ok_or(())?;
     let piece = utils::parse_piece(&piece).ok_or(())?;
     let (col, row) = utils::parse_pos(&pos).ok_or(())?;
-    if !s.logic.deploy_piece(b1, w, piece, row, col) {
+    if s.logic.deploy_piece(b1, w, piece, row, col).is_err() {
         return Err(());
     }
     s.notify_all();
@@ -198,16 +198,12 @@ async fn handle_move(s: &mut Session, auth_token: AuthToken, change: String) -> 
     }
     let user_id = s.user_ids.get(&auth_token).ok_or(())?;
     let (b1, w) = s.get_board_and_color(user_id).ok_or(())?;
-    let is_whites_turn = if b1 {
-        s.logic.white_active_1
-    } else {
-        s.logic.white_active_2
-    };
+    let is_whites_turn = s.logic.get_white_active(b1);
     if is_whites_turn != w {
         return Err(());
     }
     let [i, j, i_new, j_new] = utils::parse_change(&change);
-    if !s.logic.movemaker(b1, i, j, i_new, j_new) {
+    if s.logic.movemaker(b1, i, j, i_new, j_new).is_err() {
         return Err(());
     }
     s.notify_all();
