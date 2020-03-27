@@ -40,6 +40,7 @@ const TICK: Duration = Duration::from_secs(2);
 const ZERO_SECS: Duration = Duration::from_secs(0);
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Session {
     id: SessionId,
     #[serde(skip_serializing)]
@@ -52,7 +53,7 @@ pub struct Session {
     #[serde(skip_serializing)]
     queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
     game_id: usize,
-    #[serde(flatten)]
+    #[serde(skip_serializing)]
     game: Option<Game>,
     #[serde(skip_serializing)]
     broadcast_tx: broadcast::Sender<String>,
@@ -154,7 +155,8 @@ impl Session {
 
     fn notify_all(&mut self) {
         let ev = Event {
-            session: self,
+            lobby: self,
+            game: self.game.as_ref(),
             board: self.game.as_ref().map(|g| gen_yfen(&g.logic)),
         };
         let ev = format!("data: {}\n\n", serde_json::to_string(&ev).unwrap());
@@ -170,6 +172,7 @@ impl Session {
 
 /// `Game` holds game related data.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Game {
     /// Active participants.
     ///
@@ -184,6 +187,7 @@ struct Game {
     clock: ((Instant, bool), (Instant, bool)),
     /// Remaining time for each user. Follows the same order as
     /// `active_participants`.
+    #[serde(skip_serializing)]
     remaining_time: ((Duration, Duration), (Duration, Duration)),
     #[serde(skip_serializing)]
     logic: ChessLogic,
@@ -274,6 +278,7 @@ impl Game {
 #[derive(Serialize)]
 struct Event<'a> {
     #[serde(flatten)]
-    session: &'a Session,
+    lobby: &'a Session,
+    game: Option<&'a Game>,
     board: Option<(String, String)>,
 }
