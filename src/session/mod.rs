@@ -36,8 +36,15 @@ const CHANNEL_CAPACITY: usize = 0;
 const GAME_DURATION: Duration = Duration::from_secs(300);
 const MAX_NUM_OF_PARTICIPANTS: usize = 5;
 const MAX_NUM_OF_USERS: usize = std::u8::MAX as usize + 1;
+const PROMOTE_ADDED_TIME: Duration = Duration::from_secs(3);
 const TICK: Duration = Duration::from_secs(2);
 const ZERO_SECS: Duration = Duration::from_secs(0);
+
+type Result<T> = std::result::Result<T, Error>;
+
+enum Error {
+    Error,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,8 +55,8 @@ pub struct Session {
     #[serde(skip_serializing)]
     user_ids: HashMap<AuthToken, UserId>,
     user_names: HashMap<UserId, String>,
-    score: HashMap<UserId, usize>,
     participants: Vec<UserId>,
+    score: HashMap<UserId, usize>,
     #[serde(skip_serializing)]
     queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
     game_id: usize,
@@ -73,8 +80,8 @@ impl Session {
             rx,
             user_ids: HashMap::with_capacity(0),
             user_names: HashMap::with_capacity(0),
-            score: HashMap::with_capacity(0),
             participants: Vec::with_capacity(0),
+            score: HashMap::with_capacity(0),
             queue: VecDeque::with_capacity(0),
             game_id: 0,
             game: None,
@@ -92,12 +99,12 @@ impl Session {
                 select! {
                     msg = self.rx.next() => {
                         match msg {
-                            Some(msg) => handler::handle(&mut self, msg).await,
+                            Some(msg) => handler::handle_msg(&mut self, msg).await,
                             _ => break
                         }
                     },
-                    _ = timer.tick().fuse() => self.tick(),
-                    _ = broadcast_timer.tick().fuse() => self.notify_all()
+                    _ = timer.tick().fuse() => handler::handle_timer(&mut self),
+                    _ = broadcast_timer.tick().fuse() => handler::handle_broadcast_timer(&mut self),
                 }
             }
         });
@@ -112,8 +119,78 @@ impl Session {
         }
     }
 
-    fn reset_game(&mut self, active_participants: ((UserId, UserId), (UserId, UserId))) {
+    fn user_id(&self, auth_token: &AuthToken) -> Option<UserId> {
+        self.user_ids.get(auth_token).cloned()
+    }
+
+    fn add_user(&mut self, name: String) -> Result<(UserId, AuthToken)> {
+        if !utils::is_valid_user_name(&name) || self.user_ids.len() >= MAX_NUM_OF_USERS {
+            return Err(Error::Error);
+        }
+        let user_id = UserId::new(self.user_ids.len() as u8);
+        let auth_token = AuthToken::new();
+        self.user_ids.insert(auth_token.clone(), user_id);
+        self.user_names.insert(user_id, name);
+        Ok((user_id, auth_token))
+    }
+
+    fn set_participants(&mut self, participants: Vec<UserId>) -> Result<()> {
+        if self.did_tournament_start()
+            || participants
+                .iter()
+                .any(|p| self.user_names.get(p).is_none())
+        {
+            return Err(Error::Error);
+        }
+        self.participants = participants;
+        Ok(())
+    }
+
+    fn fill_queue(&mut self) -> Result<()> {
+        if self.queue.len() > 0 {
+            return Ok(());
+        } else if self.did_tournament_start() {
+            return Err(Error::Error);
+        }
+        let pairings = utils::create_pairings(self.participants.len() as u8);
+        self.queue = pairings
+            .iter()
+            .map(|&((a, b), (c, d))| {
+                (
+                    (
+                        self.participants[(a - 1) as usize],
+                        self.participants[(b - 1) as usize],
+                    ),
+                    (
+                        self.participants[(c - 1) as usize],
+                        self.participants[(d - 1) as usize],
+                    ),
+                )
+            })
+            .collect();
+        Ok(())
+    }
+
+    fn did_tournament_start(&self) -> bool {
+        self.game_id != 0
+    }
+
+    fn did_game_start(&self) -> bool {
+        self.game.is_some()
+    }
+
+    fn start_game(&mut self) -> Result<()> {
+        if self.participants.len() < 4
+            || self.participants.len() > MAX_NUM_OF_PARTICIPANTS
+            || self.did_game_start()
+        {
+            return Err(Error::Error);
+        }
+        self.fill_queue()?;
+        let active_participants = self.queue.pop_front().ok_or(Error::Error)?;
+        self.game_id += 1;
         self.game = Some(Game::new(active_participants));
+        Ok(())
     }
 
     fn tick(&mut self) {
@@ -130,7 +207,6 @@ impl Session {
                         .insert(u1, *self.score.get(&u1).unwrap_or(&0) + 1);
                     self.score
                         .insert(u2, *self.score.get(&u2).unwrap_or(&0) + 1);
-                    self.game_id += 1;
                     self.game = None;
                     self.notify_all();
                 }
@@ -139,12 +215,10 @@ impl Session {
                         .insert(u3, *self.score.get(&u3).unwrap_or(&0) + 1);
                     self.score
                         .insert(u4, *self.score.get(&u4).unwrap_or(&0) + 1);
-                    self.game_id += 1;
                     self.game = None;
                     self.notify_all();
                 }
                 Winner::P => {
-                    self.game_id += 1;
                     self.game = None;
                     self.notify_all();
                 }
@@ -265,5 +339,45 @@ impl Game {
         } else {
             self.logic.get_winner(true)
         }
+    }
+
+    fn deploy_piece(&mut self, user_id: &UserId, piece: &str, pos: &str) -> Result<()> {
+        let (b1, w) = self.board_and_color(user_id).ok_or(Error::Error)?;
+        let piece = utils::parse_piece(piece).ok_or(Error::Error)?;
+        let (col, row) = utils::parse_pos(&pos).ok_or(Error::Error)?;
+        self.update_clock();
+        self.logic
+            .deploy_piece(b1, w, piece, row, col)
+            .or(Err(Error::Error))?;
+        Ok(())
+    }
+
+    fn move_piece(&mut self, user_id: &UserId, change: &str) -> Result<()> {
+        let (b1, w) = self.board_and_color(user_id).ok_or(Error::Error)?;
+        if self.logic.get_white_active(b1) != w {
+            return Err(Error::Error);
+        }
+        let [i, j, i_new, j_new] = utils::parse_change(&change.to_owned());
+        self.update_clock();
+        self.logic
+            .movemaker(b1, i, j, i_new, j_new)
+            .or(Err(Error::Error))?;
+        Ok(())
+    }
+
+    fn promote_piece(&mut self, user_id: &UserId, change: &str, upgrade_to: &str) -> Result<()> {
+        let (b1, w) = self.board_and_color(user_id).ok_or(Error::Error)?;
+        if self.logic.get_white_active(b1) != w {
+            return Err(Error::Error);
+        }
+        let [i, j, i_new, j_new] = utils::parse_change(&change.to_owned());
+        let upgrade_to = utils::parse_piece(&upgrade_to).ok_or(Error::Error)?;
+        self.logic.set_promotion(b1, upgrade_to);
+        self.update_clock();
+        self.logic
+            .movemaker(b1, i, j, i_new, j_new)
+            .or(Err(Error::Error))?;
+        self.add_time(user_id, PROMOTE_ADDED_TIME);
+        Ok(())
     }
 }

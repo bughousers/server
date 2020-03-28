@@ -13,19 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use super::utils;
 use super::Session;
-use super::{MAX_NUM_OF_PARTICIPANTS, MAX_NUM_OF_USERS};
 use crate::common::req::*;
 use crate::common::resp::*;
 use crate::common::*;
 use futures::channel::oneshot;
-use std::time::Duration;
 use tokio::sync::broadcast;
 
 type Result = std::result::Result<(), ()>;
-
-const PROMOTION_ADDED_TIME: Duration = Duration::from_secs(3);
 
 pub enum Msg {
     C(Create, oneshot::Sender<Created>),
@@ -37,7 +32,7 @@ pub enum Msg {
     Subscribe(oneshot::Sender<broadcast::Receiver<String>>),
 }
 
-pub async fn handle(s: &mut Session, msg: Msg) {
+pub async fn handle_msg(s: &mut Session, msg: Msg) {
     let _ = match msg {
         Msg::C(c, tx) => handle_create(s, c, tx).await,
         Msg::D(d) => handle_delete(s, d).await,
@@ -49,17 +44,24 @@ pub async fn handle(s: &mut Session, msg: Msg) {
     };
 }
 
+pub fn handle_timer(s: &mut Session) {
+    s.tick();
+}
+
+pub fn handle_broadcast_timer(s: &mut Session) {
+    s.notify_all();
+}
+
 async fn handle_create(s: &mut Session, req: Create, tx: oneshot::Sender<Created>) -> Result {
-    if !utils::is_valid_user_name(&req.owner_name) {
+    let res = s.add_user(req.owner_name);
+    if res.is_err() {
         s.rx.close();
         return Err(());
     }
-    let auth_token = AuthToken::new();
-    s.user_ids.insert(auth_token.clone(), UserId::OWNER);
-    s.user_names.insert(UserId::OWNER, req.owner_name);
+    let (user_id, auth_token) = res.or(Err(()))?;
     let _ = tx.send(Created {
         session_id: s.id.clone(),
-        user_id: UserId::OWNER,
+        user_id,
         auth_token,
     });
     Ok(())
@@ -81,33 +83,10 @@ async fn handle_join(s: &mut Session, req: Join, tx: oneshot::Sender<Joined>) ->
 }
 
 async fn handle_start(s: &mut Session, req: Start) -> Result {
-    if s.game.is_some()
-        || !s.is_owner(&req.auth_token)
-        || s.participants.len() < 4
-        || s.participants.len() > MAX_NUM_OF_PARTICIPANTS
-    {
+    if !s.is_owner(&req.auth_token) {
         return Err(());
     }
-    if s.game_id == 0 {
-        let pairings = utils::create_pairings(s.participants.len() as u8);
-        s.queue = pairings
-            .iter()
-            .map(|&((a, b), (c, d))| {
-                (
-                    (
-                        s.participants[(a - 1) as usize],
-                        s.participants[(b - 1) as usize],
-                    ),
-                    (
-                        s.participants[(c - 1) as usize],
-                        s.participants[(d - 1) as usize],
-                    ),
-                )
-            })
-            .collect();
-    }
-    let active_participants = s.queue.pop_front().ok_or(())?;
-    s.reset_game(active_participants);
+    s.start_game().or(Err(()))?;
     s.notify_all();
     Ok(())
 }
@@ -129,30 +108,16 @@ async fn handle_board(s: &mut Session, req: Board) -> Result {
 }
 
 async fn handle_participants(s: &mut Session, req: Participants) -> Result {
-    if s.game_id != 0
-        || s.game.is_some()
-        || !s.is_owner(&req.auth_token)
-        || req
-            .participants
-            .iter()
-            .any(|p| s.user_names.get(p).is_none())
-    {
+    if !s.is_owner(&req.auth_token) {
         return Err(());
     }
-    s.participants = req.participants;
+    s.set_participants(req.participants).or(Err(()))?;
     s.notify_all();
     Ok(())
 }
 
 async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<Joined>) -> Result {
-    if !utils::is_valid_user_name(&user_name) || s.user_ids.len() > MAX_NUM_OF_USERS {
-        return Err(());
-    }
-    let user_id = s.user_ids.len();
-    let user_id = UserId::new(user_id as u8);
-    let auth_token = AuthToken::new();
-    s.user_ids.insert(auth_token.clone(), user_id);
-    s.user_names.insert(user_id, user_name.clone());
+    let (user_id, auth_token) = s.add_user(user_name.clone()).or(Err(()))?;
     let _ = tx.send(Joined {
         user_id,
         user_name,
@@ -183,31 +148,18 @@ async fn handle_deploy(
     piece: String,
     pos: String,
 ) -> Result {
-    let user_id = s.user_ids.get(&auth_token).ok_or(())?;
+    let user_id = s.user_id(&auth_token).ok_or(())?;
     let game = s.game.as_mut().ok_or(())?;
-    let (b1, w) = game.board_and_color(user_id).ok_or(())?;
-    let piece = utils::parse_piece(&piece).ok_or(())?;
-    let (col, row) = utils::parse_pos(&pos).ok_or(())?;
-    game.update_clock();
-    game.logic
-        .deploy_piece(b1, w, piece, row, col)
-        .or(Err(()))?;
+    game.deploy_piece(&user_id, &piece, &pos).or(Err(()))?;
     s.check_end_conditions();
     s.notify_all();
     Ok(())
 }
 
 async fn handle_move(s: &mut Session, auth_token: AuthToken, change: String) -> Result {
+    let user_id = s.user_id(&auth_token).ok_or(())?;
     let game = s.game.as_mut().ok_or(())?;
-    let user_id = s.user_ids.get(&auth_token).ok_or(())?;
-    let (b1, w) = game.board_and_color(user_id).ok_or(())?;
-    let is_whites_turn = game.logic.get_white_active(b1);
-    if is_whites_turn != w {
-        return Err(());
-    }
-    let [i, j, i_new, j_new] = utils::parse_change(&change);
-    game.update_clock();
-    game.logic.movemaker(b1, i, j, i_new, j_new).or(Err(()))?;
+    game.move_piece(&user_id, &change).or(Err(()))?;
     s.check_end_conditions();
     s.notify_all();
     Ok(())
@@ -219,19 +171,10 @@ async fn handle_promote(
     change: String,
     upgrade_to: String,
 ) -> Result {
+    let user_id = s.user_id(&auth_token).ok_or(())?;
     let game = s.game.as_mut().ok_or(())?;
-    let user_id = s.user_ids.get(&auth_token).ok_or(())?;
-    let (b1, w) = game.board_and_color(user_id).ok_or(())?;
-    let is_whites_turn = game.logic.get_white_active(b1);
-    if is_whites_turn != w {
-        return Err(());
-    }
-    let [i, j, i_new, j_new] = utils::parse_change(&change);
-    let upgrade_to = utils::parse_piece(&upgrade_to).ok_or(())?;
-    game.logic.set_promotion(b1, upgrade_to);
-    game.update_clock();
-    game.logic.movemaker(b1, i, j, i_new, j_new).or(Err(()))?;
-    game.add_time(user_id, PROMOTION_ADDED_TIME);
+    game.promote_piece(&user_id, &change, &upgrade_to)
+        .or(Err(()))?;
     s.check_end_conditions();
     s.notify_all();
     Ok(())
