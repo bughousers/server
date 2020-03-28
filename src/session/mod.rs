@@ -16,8 +16,8 @@
 mod handler;
 mod utils;
 
+use crate::common::event::{Event, EventType};
 use crate::common::*;
-use bughouse_rs::infoCourier::infoCourier::gen_yfen;
 use bughouse_rs::logic::{ChessLogic, Winner};
 use futures::channel::mpsc;
 use futures::{select, FutureExt, StreamExt};
@@ -155,12 +155,10 @@ impl Session {
 
     fn notify_all(&mut self) {
         let ev = Event {
-            lobby: self,
-            game: self.game.as_ref(),
-            board: self.game.as_ref().map(|g| gen_yfen(&g.logic)),
+            caused_by: UserId::OWNER,
+            ev: EventType::FullSync(self),
         };
-        let ev = format!("data: {}\n\n", serde_json::to_string(&ev).unwrap());
-        match self.broadcast_tx.send(ev) {
+        match self.broadcast_tx.send(ev.to_message()) {
             Ok(_) => self.failed_broadcasts = 0,
             _ => self.failed_broadcasts += 1,
         }
@@ -171,26 +169,21 @@ impl Session {
 }
 
 /// `Game` holds game related data.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Game {
+pub struct Game {
     /// Active participants.
     ///
     /// Each `UserId` pair represents a team. Each user in a pair plays against
     /// a user in the same position in the other pair. The player colors are as
     /// follows: ((white, black), (black, white)).
-    active_participants: ((UserId, UserId), (UserId, UserId)),
+    pub active_participants: ((UserId, UserId), (UserId, UserId)),
     /// For each board, we have a clock, which is used for recalculating the
     /// remaining time of the currently active player. If the `bool` value is
     /// `true`, the clock is paused.
-    #[serde(skip_serializing)]
-    clock: ((Instant, bool), (Instant, bool)),
+    pub clock: ((Instant, bool), (Instant, bool)),
     /// Remaining time for each user. Follows the same order as
     /// `active_participants`.
-    #[serde(skip_serializing)]
-    remaining_time: ((Duration, Duration), (Duration, Duration)),
-    #[serde(skip_serializing)]
-    logic: ChessLogic,
+    pub remaining_time: ((Duration, Duration), (Duration, Duration)),
+    pub logic: ChessLogic,
 }
 
 impl Game {
@@ -273,12 +266,4 @@ impl Game {
             self.logic.get_winner(true)
         }
     }
-}
-
-#[derive(Serialize)]
-struct Event<'a> {
-    #[serde(flatten)]
-    lobby: &'a Session,
-    game: Option<&'a Game>,
-    board: Option<(String, String)>,
 }
