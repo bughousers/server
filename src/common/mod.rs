@@ -15,6 +15,7 @@
 
 pub mod chan;
 mod data;
+pub mod event;
 pub mod req;
 pub mod resp;
 mod utils;
