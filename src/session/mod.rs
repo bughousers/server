@@ -194,7 +194,12 @@ impl Session {
     }
 
     fn tick(&mut self) {
-        self.game.as_mut().map(|g| g.update_clock());
+        self.game.as_mut().map(|g| {
+            g.update_remaining_time(true);
+            g.refresh_clock(true);
+            g.update_remaining_time(false);
+            g.refresh_clock(false);
+        });
         self.check_end_conditions();
     }
 
@@ -289,41 +294,37 @@ impl Game {
         }
     }
 
-    fn update_clock(&mut self) {
-        let ((c1, p1), (c2, p2)) = &mut self.clock;
-        let ((r1, r2), (r3, r4)) = &mut self.remaining_time;
-        let r1 = if self.logic.get_white_active(true) {
-            r1
-        } else {
-            r3
-        };
-        let r2 = if self.logic.get_white_active(false) {
-            r4
-        } else {
-            r2
-        };
-        if !*p1 {
-            *r1 = r1.checked_sub(c1.elapsed()).unwrap_or(ZERO_SECS);
-        }
-        if !*p2 {
-            *r2 = r2.checked_sub(c1.elapsed()).unwrap_or(ZERO_SECS);
-        }
-        let now = Instant::now();
-        *c1 = now;
-        *c2 = now;
+    fn refresh_clock(&mut self, board: bool) {
+        let (c1, c2) = &mut self.clock;
+        let (c, _) = if board { c1 } else { c2 };
+        *c = Instant::now();
     }
 
-    fn add_time(&mut self, user_id: &UserId, time: Duration) {
-        if let Some(board_and_color) = self.board_and_color(&user_id) {
-            let ((r1, r2), (r3, r4)) = &mut self.remaining_time;
-            let rem = match board_and_color {
-                (true, true) => r1,
-                (false, false) => r2,
-                (true, false) => r3,
-                (false, true) => r4,
-            };
-            *rem = *rem + time;
+    fn extend_remaining_time(&mut self, board: bool, duration: Duration) {
+        let ((r1, r2), (r3, r4)) = &mut self.remaining_time;
+        let (rw, rb) = if board { (r1, r3) } else { (r4, r2) };
+        let r = if self.logic.get_white_active(board) {
+            rw
+        } else {
+            rb
+        };
+        *r += duration;
+    }
+
+    fn update_remaining_time(&mut self, board: bool) {
+        let (c1, c2) = &mut self.clock;
+        let (c, p) = if board { c1 } else { c2 };
+        if *p {
+            return;
         }
+        let ((r1, r2), (r3, r4)) = &mut self.remaining_time;
+        let (rw, rb) = if board { (r1, r3) } else { (r4, r2) };
+        let r = if self.logic.get_white_active(board) {
+            rw
+        } else {
+            rb
+        };
+        *r = r.checked_sub(c.elapsed()).unwrap_or(ZERO_SECS);
     }
 
     fn winner(&self) -> Winner {
@@ -345,10 +346,12 @@ impl Game {
         let (b1, w) = self.board_and_color(user_id).ok_or(Error::Error)?;
         let piece = utils::parse_piece(piece).ok_or(Error::Error)?;
         let (col, row) = utils::parse_pos(&pos).ok_or(Error::Error)?;
-        self.update_clock();
+        self.update_remaining_time(b1);
+        self.refresh_clock(b1);
         self.logic
             .deploy_piece(b1, w, piece, row, col)
             .or(Err(Error::Error))?;
+        self.refresh_clock(b1);
         Ok(())
     }
 
@@ -358,10 +361,12 @@ impl Game {
             return Err(Error::Error);
         }
         let [i, j, i_new, j_new] = utils::parse_change(&change.to_owned());
-        self.update_clock();
+        self.update_remaining_time(b1);
+        self.refresh_clock(b1);
         self.logic
             .movemaker(b1, i, j, i_new, j_new)
             .or(Err(Error::Error))?;
+        self.refresh_clock(b1);
         Ok(())
     }
 
@@ -373,11 +378,13 @@ impl Game {
         let [i, j, i_new, j_new] = utils::parse_change(&change.to_owned());
         let upgrade_to = utils::parse_piece(&upgrade_to).ok_or(Error::Error)?;
         self.logic.set_promotion(b1, upgrade_to);
-        self.update_clock();
+        self.extend_remaining_time(b1, PROMOTE_ADDED_TIME);
+        self.update_remaining_time(b1);
+        self.refresh_clock(b1);
         self.logic
             .movemaker(b1, i, j, i_new, j_new)
             .or(Err(Error::Error))?;
-        self.add_time(user_id, PROMOTE_ADDED_TIME);
+        self.refresh_clock(b1);
         Ok(())
     }
 }
