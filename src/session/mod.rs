@@ -60,7 +60,6 @@ pub struct Session {
     #[serde(skip_serializing)]
     queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
     game_id: usize,
-    #[serde(skip_serializing)]
     game: Option<Game>,
     #[serde(skip_serializing)]
     broadcast_tx: broadcast::Sender<String>,

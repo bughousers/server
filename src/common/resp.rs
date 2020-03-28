@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use super::data::{AuthToken, SessionId, UserId};
+use crate::session::Session;
 use hyper::Body;
 use serde::{Deserialize, Serialize};
 
@@ -35,17 +36,10 @@ impl Into<Body> for Created {
 }
 
 /// `Joined` is sent when a user succesfully joins a session.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Joined {
-    pub user_id: UserId,
-    pub user_name: String,
-    pub auth_token: AuthToken,
-}
-
-impl Into<Body> for Joined {
-    fn into(self) -> Body {
-        let json = serde_json::to_string(&self).unwrap();
-        Body::from(json)
-    }
+pub struct Joined<'a> {
+    pub user_id: &'a UserId,
+    pub auth_token: &'a AuthToken,
+    pub session: &'a Session,
 }

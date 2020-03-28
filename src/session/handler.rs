@@ -25,7 +25,7 @@ type Result = std::result::Result<(), ()>;
 pub enum Msg {
     C(Create, oneshot::Sender<Created>),
     D(Delete),
-    J(Join, oneshot::Sender<Joined>),
+    J(Join, oneshot::Sender<String>),
     S(Start),
     B(Board),
     P(Participants),
@@ -75,7 +75,7 @@ async fn handle_delete(s: &mut Session, req: Delete) -> Result {
     Ok(())
 }
 
-async fn handle_join(s: &mut Session, req: Join, tx: oneshot::Sender<Joined>) -> Result {
+async fn handle_join(s: &mut Session, req: Join, tx: oneshot::Sender<String>) -> Result {
     match req {
         Join::Join { user_name } => handle_join2(s, user_name, tx).await,
         Join::Rejoin { auth_token } => handle_rejoin(s, auth_token, tx).await,
@@ -116,13 +116,15 @@ async fn handle_participants(s: &mut Session, req: Participants) -> Result {
     Ok(())
 }
 
-async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<Joined>) -> Result {
-    let (user_id, auth_token) = s.add_user(user_name.clone()).or(Err(()))?;
-    let _ = tx.send(Joined {
-        user_id,
-        user_name,
-        auth_token,
-    });
+async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<String>) -> Result {
+    let (user_id, auth_token) = s.add_user(user_name).or(Err(()))?;
+    let json = serde_json::to_string(&Joined {
+        user_id: &user_id,
+        auth_token: &auth_token,
+        session: s,
+    })
+    .unwrap();
+    let _ = tx.send(json);
     s.notify_all();
     Ok(())
 }
@@ -130,15 +132,16 @@ async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<Jo
 async fn handle_rejoin(
     s: &mut Session,
     auth_token: AuthToken,
-    tx: oneshot::Sender<Joined>,
+    tx: oneshot::Sender<String>,
 ) -> Result {
-    let user_id = s.user_ids.get(&auth_token).ok_or(())?.clone();
-    let user_name = s.user_names.get(&user_id).unwrap().clone();
-    let _ = tx.send(Joined {
+    let user_id = s.user_ids.get(&auth_token).ok_or(())?;
+    let json = serde_json::to_string(&Joined {
         user_id,
-        user_name,
-        auth_token,
-    });
+        auth_token: &auth_token,
+        session: s,
+    })
+    .unwrap();
+    let _ = tx.send(json);
     Ok(())
 }
 
