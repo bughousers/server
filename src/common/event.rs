@@ -103,10 +103,11 @@ pub struct ParticipantsChanged<'a> {
 
 impl Serialize for Game {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut game = serializer.serialize_struct("Game", 3)?;
+        let mut game = serializer.serialize_struct("Game", 4)?;
         game.serialize_field("activeParticipants", &self.active_participants)?;
         game.serialize_field("remainingTime", &self.remaining_time)?;
         game.serialize_field("board", &gen_yfen(&self.logic))?;
+        game.serialize_field("pool", &self.logic.get_pools())?;
         game.end()
     }
 }
