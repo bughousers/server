@@ -23,7 +23,7 @@ use tokio::sync::broadcast;
 type Result = std::result::Result<(), ()>;
 
 pub enum Msg {
-    C(Create, oneshot::Sender<Created>),
+    C(Create, oneshot::Sender<String>),
     D(Delete),
     J(Join, oneshot::Sender<String>),
     S(Start),
@@ -52,18 +52,20 @@ pub fn handle_broadcast_timer(s: &mut Session) {
     s.notify_all();
 }
 
-async fn handle_create(s: &mut Session, req: Create, tx: oneshot::Sender<Created>) -> Result {
+async fn handle_create(s: &mut Session, req: Create, tx: oneshot::Sender<String>) -> Result {
     let res = s.add_user(req.owner_name);
     if res.is_err() {
         s.rx.close();
         return Err(());
     }
     let (user_id, auth_token) = res.or(Err(()))?;
-    let _ = tx.send(Created {
-        session_id: s.id.clone(),
-        user_id,
-        auth_token,
-    });
+    let json = serde_json::to_string(&Created {
+        session_id: &s.id,
+        user_id: &user_id,
+        auth_token: &auth_token,
+    })
+    .unwrap();
+    let _ = tx.send(json);
     Ok(())
 }
 

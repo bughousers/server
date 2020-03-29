@@ -15,24 +15,16 @@
 
 use super::data::{AuthToken, SessionId, UserId};
 use crate::session::Session;
-use hyper::Body;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// `Created` is sent when a session is successfully created as per user
 /// request.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Created {
-    pub session_id: SessionId,
-    pub user_id: UserId,
-    pub auth_token: AuthToken,
-}
-
-impl Into<Body> for Created {
-    fn into(self) -> Body {
-        let json = serde_json::to_string(&self).unwrap();
-        Body::from(json)
-    }
+pub struct Created<'a> {
+    pub session_id: &'a SessionId,
+    pub user_id: &'a UserId,
+    pub auth_token: &'a AuthToken,
 }
 
 /// `Joined` is sent when a user succesfully joins a session.
