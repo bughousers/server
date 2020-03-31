@@ -15,7 +15,7 @@
 
 use super::data::UserId;
 use crate::session::{Game, Session};
-use bughouse_rs::infoCourier::infoCourier::gen_yfen;
+use bughouse_rs::infoCourier::infoCourier::gen_fen;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
@@ -52,7 +52,7 @@ impl Serialize for Game {
         let mut game = serializer.serialize_struct("Game", 4)?;
         game.serialize_field("activeParticipants", &self.active_participants)?;
         game.serialize_field("remainingTime", &self.remaining_time)?;
-        game.serialize_field("board", &gen_yfen(&self.logic))?;
+        game.serialize_field("board", &gen_fen(&self.logic))?;
         game.serialize_field("pool", &self.logic.get_pools())?;
         game.end()
     }

@@ -360,7 +360,7 @@ impl Game {
         if self.logic.get_white_active(b1) != w {
             return Err(Error::Error);
         }
-        let [i, j, i_new, j_new] = utils::parse_change(&change.to_owned());
+        let [i, j, i_new, j_new] = utils::parse_change(&change.to_owned()).ok_or(Error::Error)?;
         self.update_remaining_time(b1);
         self.refresh_clock(b1);
         self.logic
@@ -375,7 +375,7 @@ impl Game {
         if self.logic.get_white_active(b1) != w {
             return Err(Error::Error);
         }
-        let [i, j, i_new, j_new] = utils::parse_change(&change.to_owned());
+        let [i, j, i_new, j_new] = utils::parse_change(&change.to_owned()).ok_or(Error::Error)?;
         let upgrade_to = utils::parse_piece(&upgrade_to).ok_or(Error::Error)?;
         self.logic.set_promotion(b1, upgrade_to);
         self.extend_remaining_time(b1, PROMOTE_ADDED_TIME);
