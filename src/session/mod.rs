@@ -212,7 +212,7 @@ impl Session {
                     self.score
                         .insert(u2, *self.score.get(&u2).unwrap_or(&0) + 1);
                     self.game = None;
-                    self.notify_all();
+                    self.notify_all(u1, EventType::GameEnded(Some((u1, u2))));
                 }
                 Winner::B1 | Winner::W2 => {
                     self.score
@@ -220,21 +220,22 @@ impl Session {
                     self.score
                         .insert(u4, *self.score.get(&u4).unwrap_or(&0) + 1);
                     self.game = None;
-                    self.notify_all();
+                    self.notify_all(u3, EventType::GameEnded(Some((u3, u4))));
                 }
                 Winner::P => {
                     self.game = None;
-                    self.notify_all();
+                    self.notify_all(UserId::OWNER, EventType::GameEnded(None));
                 }
                 _ => (),
             }
         }
     }
 
-    fn notify_all(&mut self) {
+    fn notify_all(&mut self, caused_by: UserId, ev: EventType) {
         let ev = Event {
-            caused_by: UserId::OWNER,
-            ev: EventType::FullSync(self),
+            caused_by,
+            ev,
+            session: &self,
         };
         match self.broadcast_tx.send(ev.to_message()) {
             Ok(_) => self.failed_broadcasts = 0,

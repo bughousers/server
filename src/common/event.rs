@@ -23,8 +23,8 @@ use serde::{Serialize, Serializer};
 #[serde(rename_all = "camelCase")]
 pub struct Event<'a> {
     pub caused_by: UserId,
-    #[serde(flatten)]
-    pub ev: EventType<'a>,
+    pub ev: EventType,
+    pub session: &'a Session,
 }
 
 impl<'a> Event<'a> {
@@ -35,70 +35,16 @@ impl<'a> Event<'a> {
 }
 
 #[derive(Clone, Serialize)]
-#[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
-pub enum EventType<'a> {
-    Joined(Joined<'a>),
-    GameStarted(GameStarted<'a>),
-    Board(Board<'a>),
-    ParticipantsChanged(ParticipantsChanged<'a>),
-    FullSync(&'a Session),
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Joined<'a> {
-    pub user_id: UserId,
-    pub user_name: &'a str,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GameStarted<'a> {
-    pub game_id: usize,
-    pub active_participants: &'a ((UserId, UserId), (UserId, UserId)),
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Board<'a> {
-    pub board: bool,
-    pub ev: BoardType<'a>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "camelCase")]
-pub enum BoardType<'a> {
-    Deployed(Deployed<'a>),
-    Moved(Moved<'a>),
-    Promoted(Promoted<'a>),
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Deployed<'a> {
-    pub piece: &'a str,
-    pub pos: &'a str,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Moved<'a> {
-    pub change: &'a str,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Promoted<'a> {
-    pub change: &'a str,
-    pub upgrade_to: &'a str,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ParticipantsChanged<'a> {
-    pub participants: &'a [UserId],
+pub enum EventType {
+    GameEnded(Option<(UserId, UserId)>),
+    GameStarted,
+    Joined,
+    ParticipantsChanged,
+    Periodic,
+    PieceDeployed,
+    PieceMoved,
+    PiecePromoted,
 }
 
 impl Serialize for Game {

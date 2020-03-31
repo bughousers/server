@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use super::Session;
+use crate::common::event::EventType;
 use crate::common::req::*;
 use crate::common::resp::*;
 use crate::common::*;
@@ -49,7 +50,7 @@ pub fn handle_timer(s: &mut Session) {
 }
 
 pub fn handle_broadcast_timer(s: &mut Session) {
-    s.notify_all();
+    s.notify_all(UserId::OWNER, EventType::Periodic);
 }
 
 async fn handle_create(s: &mut Session, req: Create, tx: oneshot::Sender<String>) -> Result {
@@ -89,7 +90,7 @@ async fn handle_start(s: &mut Session, req: Start) -> Result {
         return Err(());
     }
     s.start_game().or(Err(()))?;
-    s.notify_all();
+    s.notify_all(UserId::OWNER, EventType::GameStarted);
     Ok(())
 }
 
@@ -114,7 +115,7 @@ async fn handle_participants(s: &mut Session, req: Participants) -> Result {
         return Err(());
     }
     s.set_participants(req.participants).or(Err(()))?;
-    s.notify_all();
+    s.notify_all(UserId::OWNER, EventType::ParticipantsChanged);
     Ok(())
 }
 
@@ -127,7 +128,7 @@ async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<St
     })
     .unwrap();
     let _ = tx.send(json);
-    s.notify_all();
+    s.notify_all(user_id, EventType::Joined);
     Ok(())
 }
 
@@ -157,7 +158,7 @@ async fn handle_deploy(
     let game = s.game.as_mut().ok_or(())?;
     game.deploy_piece(&user_id, &piece, &pos).or(Err(()))?;
     s.check_end_conditions();
-    s.notify_all();
+    s.notify_all(user_id, EventType::PieceDeployed);
     Ok(())
 }
 
@@ -166,7 +167,7 @@ async fn handle_move(s: &mut Session, auth_token: AuthToken, change: String) -> 
     let game = s.game.as_mut().ok_or(())?;
     game.move_piece(&user_id, &change).or(Err(()))?;
     s.check_end_conditions();
-    s.notify_all();
+    s.notify_all(user_id, EventType::PieceMoved);
     Ok(())
 }
 
@@ -181,7 +182,7 @@ async fn handle_promote(
     game.promote_piece(&user_id, &change, &upgrade_to)
         .or(Err(()))?;
     s.check_end_conditions();
-    s.notify_all();
+    s.notify_all(user_id, EventType::PiecePromoted);
     Ok(())
 }
 
