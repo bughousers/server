@@ -58,6 +58,15 @@ pub struct Start {
     pub auth_token: AuthToken,
 }
 
+/// `Resign` is received when an active participant wants to surrender.
+///
+/// API endpoint: `POST /v1/sessions/:sid/games/:gid`
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resign {
+    pub auth_token: AuthToken,
+}
+
 /// `Board` is received when the user wants to modify the state of the
 /// chessboard.
 ///

@@ -132,14 +132,21 @@ async fn dispatch_sse(mut session: mpsc::Sender<Msg>, parts: &[&str], req: Reque
 }
 
 async fn dispatch_game(
-    session: mpsc::Sender<Msg>,
+    mut session: mpsc::Sender<Msg>,
     parts: &[&str],
     req: Request,
     game_id: &str,
 ) -> Result {
-    match parts.split_first() {
-        Some((&"board", rest)) => dispatch_board(session, rest, req, game_id).await,
-        _ => not_found(),
+    if parts.is_empty() && req.method() == &Method::POST {
+        let json = body::to_bytes(req.into_body()).await?;
+        let req = serde_json::from_slice::<req::Resign>(&json)?;
+        session.send(Msg::R(req)).await?;
+        accepted()
+    } else {
+        match parts.split_first() {
+            Some((&"board", rest)) => dispatch_board(session, rest, req, game_id).await,
+            _ => not_found(),
+        }
     }
 }
 

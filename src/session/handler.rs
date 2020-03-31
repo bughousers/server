@@ -28,6 +28,7 @@ pub enum Msg {
     D(Delete),
     J(Join, oneshot::Sender<String>),
     S(Start),
+    R(Resign),
     B(Board),
     P(Participants),
     Subscribe(oneshot::Sender<broadcast::Receiver<String>>),
@@ -39,6 +40,7 @@ pub async fn handle_msg(s: &mut Session, msg: Msg) {
         Msg::D(d) => handle_delete(s, d).await,
         Msg::J(j, tx) => handle_join(s, j, tx).await,
         Msg::S(st) => handle_start(s, st).await,
+        Msg::R(r) => handle_resign(s, r).await,
         Msg::B(b) => handle_board(s, b).await,
         Msg::P(p) => handle_participants(s, p).await,
         Msg::Subscribe(tx) => handle_subscribe(s, tx).await,
@@ -91,6 +93,13 @@ async fn handle_start(s: &mut Session, req: Start) -> Result {
     }
     s.start_game().or(Err(()))?;
     s.notify_all(UserId::OWNER, EventType::GameStarted);
+    Ok(())
+}
+
+async fn handle_resign(s: &mut Session, req: Resign) -> Result {
+    let user_id = s.user_id(&req.auth_token).ok_or(())?;
+    s.game.as_mut().map(|g| g.resign(&user_id));
+    s.check_end_conditions();
     Ok(())
 }
 

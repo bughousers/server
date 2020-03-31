@@ -342,6 +342,12 @@ impl Game {
         }
     }
 
+    fn resign(&mut self, user_id: &UserId) -> Result<()> {
+        let (b, w) = self.board_and_color(user_id).ok_or(Error::Error)?;
+        self.logic.resign(b, w);
+        Ok(())
+    }
+
     fn deploy_piece(&mut self, user_id: &UserId, piece: &str, pos: &str) -> Result<()> {
         let (b1, w) = self.board_and_color(user_id).ok_or(Error::Error)?;
         let piece = utils::parse_piece(piece).ok_or(Error::Error)?;
