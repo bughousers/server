@@ -64,7 +64,6 @@ async fn handle_create(s: &mut Session, req: Create, tx: oneshot::Sender<String>
     let (user_id, auth_token) = res.or(Err(()))?;
     let json = serde_json::to_string(&Created {
         session_id: &s.id,
-        user_id: &user_id,
         auth_token: &auth_token,
     })
     .unwrap();
@@ -83,7 +82,7 @@ async fn handle_delete(s: &mut Session, req: Delete) -> Result {
 async fn handle_join(s: &mut Session, req: Join, tx: oneshot::Sender<String>) -> Result {
     match req {
         Join::Join { user_name } => handle_join2(s, user_name, tx).await,
-        Join::Rejoin { auth_token } => handle_rejoin(s, auth_token, tx).await,
+        Join::Connect { auth_token } => handle_connect(s, auth_token, tx).await,
     }
 }
 
@@ -131,9 +130,7 @@ async fn handle_participants(s: &mut Session, req: Participants) -> Result {
 async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<String>) -> Result {
     let (user_id, auth_token) = s.add_user(user_name).or(Err(()))?;
     let json = serde_json::to_string(&Joined {
-        user_id: &user_id,
         auth_token: &auth_token,
-        session: s,
     })
     .unwrap();
     let _ = tx.send(json);
@@ -141,15 +138,14 @@ async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<St
     Ok(())
 }
 
-async fn handle_rejoin(
+async fn handle_connect(
     s: &mut Session,
     auth_token: AuthToken,
     tx: oneshot::Sender<String>,
 ) -> Result {
     let user_id = s.user_ids.get(&auth_token).ok_or(())?;
-    let json = serde_json::to_string(&Joined {
+    let json = serde_json::to_string(&Connected {
         user_id,
-        auth_token: &auth_token,
         session: s,
     })
     .unwrap();

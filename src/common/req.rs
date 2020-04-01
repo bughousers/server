@@ -41,9 +41,10 @@ pub struct Delete {
 #[serde(untagged)]
 #[serde(rename_all = "camelCase")]
 pub enum Join {
-    /// The user wants to rejoin a session which they have joined before.
+    /// The user wants to connect to a session and they already have an
+    /// authentication token.
     #[serde(rename_all = "camelCase")]
-    Rejoin { auth_token: AuthToken },
+    Connect { auth_token: AuthToken },
     /// The user wants to join an already existing session for the first time.
     #[serde(rename_all = "camelCase")]
     Join { user_name: String },

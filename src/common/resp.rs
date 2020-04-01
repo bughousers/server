@@ -23,15 +23,20 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct Created<'a> {
     pub session_id: &'a SessionId,
-    pub user_id: &'a UserId,
     pub auth_token: &'a AuthToken,
 }
 
-/// `Joined` is sent when a user succesfully joins a session.
+/// `Joined` is sent when a user succesfully joins a session for the first time.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Joined<'a> {
-    pub user_id: &'a UserId,
     pub auth_token: &'a AuthToken,
+}
+
+/// `Connected` is sent when a user succesfully connects to a session.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Connected<'a> {
+    pub user_id: &'a UserId,
     pub session: &'a Session,
 }
