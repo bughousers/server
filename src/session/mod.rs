@@ -212,7 +212,12 @@ impl Session {
                     self.score
                         .insert(u2, *self.score.get(&u2).unwrap_or(&0) + 1);
                     self.game = None;
-                    self.notify_all(u1, EventType::GameEnded(Some((u1, u2))));
+                    self.notify_all(
+                        u1,
+                        EventType::GameEnded {
+                            winners: Some((u1, u2)),
+                        },
+                    );
                 }
                 Winner::B1 | Winner::W2 => {
                     self.score
@@ -220,11 +225,16 @@ impl Session {
                     self.score
                         .insert(u4, *self.score.get(&u4).unwrap_or(&0) + 1);
                     self.game = None;
-                    self.notify_all(u3, EventType::GameEnded(Some((u3, u4))));
+                    self.notify_all(
+                        u3,
+                        EventType::GameEnded {
+                            winners: Some((u3, u4)),
+                        },
+                    );
                 }
                 Winner::P => {
                     self.game = None;
-                    self.notify_all(UserId::OWNER, EventType::GameEnded(None));
+                    self.notify_all(UserId::OWNER, EventType::GameEnded { winners: None });
                 }
                 _ => (),
             }

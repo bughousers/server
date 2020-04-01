@@ -23,6 +23,7 @@ use serde::{Serialize, Serializer};
 #[serde(rename_all = "camelCase")]
 pub struct Event<'a> {
     pub caused_by: UserId,
+    #[serde(flatten)]
     pub ev: EventType,
     pub session: &'a Session,
 }
@@ -36,8 +37,9 @@ impl<'a> Event<'a> {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(tag = "type")]
 pub enum EventType {
-    GameEnded(Option<(UserId, UserId)>),
+    GameEnded { winners: Option<(UserId, UserId)> },
     GameStarted,
     Joined,
     ParticipantsChanged,
