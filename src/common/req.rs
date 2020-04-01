@@ -101,7 +101,7 @@ pub enum Board {
 /// `Participants` is received when the session owner wants to modify the list
 /// of users who will be playing in a match.
 ///
-/// API endpoint: `PUT /v1/sessions/:sid/participants`
+/// API endpoint: `POST /v1/sessions/:sid/participants`
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Participants {

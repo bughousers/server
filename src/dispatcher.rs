@@ -110,7 +110,7 @@ async fn dispatch_participants(
     parts: &[&str],
     req: Request,
 ) -> Result {
-    if parts.is_empty() && req.method() == &Method::PUT {
+    if parts.is_empty() && req.method() == &Method::POST {
         let json = body::to_bytes(req.into_body()).await?;
         let req = serde_json::from_slice::<req::Participants>(&json)?;
         session.send(Msg::P(req)).await?;
