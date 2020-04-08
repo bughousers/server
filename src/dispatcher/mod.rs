@@ -17,10 +17,9 @@ mod utils;
 mod v1;
 
 use crate::sessions::Sessions;
-use crate::LISTEN_ADDR;
 use hyper::Body;
 use url::Url;
-use utils::not_found;
+use utils::{bad_request, not_found};
 
 type Request = hyper::Request<Body>;
 
@@ -29,11 +28,18 @@ pub type Response = hyper::Response<Body>;
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 pub async fn dispatch(sessions: Sessions, req: Request) -> Result {
-    let url = format!("http://{}{}", LISTEN_ADDR, req.uri());
-    let url = Url::parse(&url).unwrap();
-    let parts: Vec<&str> = url.path_segments().unwrap().collect();
-    match parts.split_first() {
-        Some((&"v1", rest)) => v1::dispatch(sessions, rest, req).await,
-        _ => not_found(),
+    let uri = req.uri();
+    if let (Some(scheme), Some(authority), Some(path_and_query)) =
+        (uri.scheme(), uri.authority(), uri.path_and_query())
+    {
+        let url = format!("{}://{}{}", scheme, authority, path_and_query);
+        let url = Url::parse(&url).unwrap();
+        let parts: Vec<&str> = url.path_segments().unwrap().collect();
+        match parts.split_first() {
+            Some((&"v1", rest)) => v1::dispatch(sessions, rest, req).await,
+            _ => not_found(),
+        }
+    } else {
+        bad_request()
     }
 }
