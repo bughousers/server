@@ -18,7 +18,7 @@ mod dispatcher;
 mod session;
 mod sessions;
 
-use dispatcher::{dispatch, BoxError};
+use dispatcher::dispatch;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::Server;
 use sessions::Sessions;
@@ -26,16 +26,14 @@ use sessions::Sessions;
 pub const LISTEN_ADDR: &'static str = "0.0.0.0:8080";
 
 #[tokio::main]
-async fn main() -> Result<(), BoxError> {
+async fn main() -> Result<(), hyper::Error> {
     let sessions = Sessions::new();
     sessions.garbage_collect().await;
     let make_svc = make_service_fn(|_| {
         let sessions = sessions.clone();
-        async { Ok::<_, BoxError>(service_fn(move |req| dispatch(sessions.clone(), req))) }
+        async { Ok::<_, hyper::Error>(service_fn(move |req| dispatch(sessions.clone(), req))) }
     });
     Server::bind(&LISTEN_ADDR.parse().unwrap())
         .serve(make_svc)
         .await
-        .unwrap();
-    Ok(())
 }

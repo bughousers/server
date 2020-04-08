@@ -39,23 +39,23 @@ pub fn to_json<T: Into<Body>>(t: T) -> Result {
     Ok(json_builder().body(t.into()).unwrap())
 }
 
-pub fn accepted() -> Result {
-    Ok(builder()
+pub fn accepted() -> Response<Body> {
+    builder()
         .status(StatusCode::ACCEPTED)
         .body(Body::empty())
-        .unwrap())
+        .unwrap()
 }
 
-pub fn bad_request() -> Result {
-    Ok(builder()
+pub fn bad_request() -> Response<Body> {
+    builder()
         .status(StatusCode::BAD_REQUEST)
         .body(Body::empty())
-        .unwrap())
+        .unwrap()
 }
 
-pub fn not_found() -> Result {
-    Ok(builder()
+pub fn not_found() -> Response<Body> {
+    builder()
         .status(StatusCode::NOT_FOUND)
         .body(Body::empty())
-        .unwrap())
+        .unwrap()
 }
