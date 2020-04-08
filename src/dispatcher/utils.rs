@@ -13,7 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use super::Result;
 use hyper::{
     header::{ACCESS_CONTROL_ALLOW_ORIGIN, CONNECTION, CONTENT_TYPE},
     http::response::Builder,
@@ -35,8 +34,8 @@ pub fn json_builder() -> Builder {
     builder().header(CONTENT_TYPE, "application/json; charset=UTF-8")
 }
 
-pub fn to_json<T: Into<Body>>(t: T) -> Result {
-    Ok(json_builder().body(t.into()).unwrap())
+pub fn to_json<T: Into<Body>>(t: T) -> Response<Body> {
+    json_builder().body(t.into()).unwrap()
 }
 
 pub fn accepted() -> Response<Body> {
