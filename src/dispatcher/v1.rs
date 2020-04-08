@@ -13,31 +13,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use super::utils::*;
+use super::{Request, Result};
 use crate::common::*;
 use crate::session::Msg;
 use crate::sessions::Sessions;
-use crate::LISTEN_ADDR;
 use futures::channel::{mpsc, oneshot};
 use futures::SinkExt;
-use hyper::http::response::Builder;
-use hyper::{body, header, Body, Method, Response, StatusCode};
-use url::Url;
+use hyper::{body, Body, Method};
 
-pub type Result = std::result::Result<Response<Body>, BoxError>;
-type Request = hyper::Request<Body>;
-pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
-pub async fn dispatch(sessions: Sessions, req: Request) -> Result {
-    let url = format!("http://{}{}", LISTEN_ADDR, req.uri());
-    let url = Url::parse(&url).unwrap();
-    let parts: Vec<&str> = url.path_segments().unwrap().collect();
-    match parts.split_first() {
-        Some((&"v1", rest)) => dispatch_v1(sessions, rest, req).await,
-        _ => not_found(),
-    }
-}
-
-async fn dispatch_v1(sessions: Sessions, parts: &[&str], req: Request) -> Result {
+pub async fn dispatch(sessions: Sessions, parts: &[&str], req: Request) -> Result {
     match parts.split_first() {
         Some((&"sessions", rest)) => dispatch_sessions(sessions, rest, req).await,
         _ => not_found(),
@@ -164,46 +149,4 @@ async fn dispatch_board(
     } else {
         not_found()
     }
-}
-
-// Helper functions
-
-// TODO: Don't set Access-Control-Allow-Origin to *
-fn builder() -> Builder {
-    Response::builder().header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-}
-
-fn event_stream_builder() -> Builder {
-    builder()
-        .header(header::CONNECTION, "keep-alive")
-        .header(header::CONTENT_TYPE, "text/event-stream")
-}
-
-fn json_builder() -> Builder {
-    builder().header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
-}
-
-fn to_json<T: Into<Body>>(t: T) -> Result {
-    Ok(json_builder().body(t.into()).unwrap())
-}
-
-fn accepted() -> Result {
-    Ok(builder()
-        .status(StatusCode::ACCEPTED)
-        .body(Body::empty())
-        .unwrap())
-}
-
-fn bad_request() -> Result {
-    Ok(builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(Body::empty())
-        .unwrap())
-}
-
-fn not_found() -> Result {
-    Ok(builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(Body::empty())
-        .unwrap())
 }
