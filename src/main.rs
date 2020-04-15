@@ -23,6 +23,7 @@ use std::net::SocketAddr;
 
 mod common;
 mod config;
+mod data;
 mod dispatcher;
 mod session;
 mod sessions;
