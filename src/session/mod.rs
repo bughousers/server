@@ -20,6 +20,7 @@ use crate::{
     common::event::{Event, EventType},
     common::*,
     config::Config,
+    sessions::Sessions,
 };
 use bughouse_rs::logic::{ChessLogic, Winner};
 use futures::{channel::mpsc, select, FutureExt, StreamExt};
@@ -47,6 +48,9 @@ enum Error {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
+    #[serde(skip_serializing)]
+    sessions: Sessions,
+    #[serde(skip_serializing)]
     id: SessionId,
     #[serde(skip_serializing)]
     rx: mpsc::Receiver<Msg>,
@@ -69,6 +73,7 @@ pub struct Session {
 
 impl Session {
     pub fn new(
+        sessions: Sessions,
         config: Arc<Config>,
         session_id: SessionId,
         owner_name: &str,
@@ -79,6 +84,7 @@ impl Session {
         let (tx, rx) = mpsc::channel(config.session_capacity());
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CHANNEL_CAPACITY);
         let session = Self {
+            sessions,
             id: session_id,
             rx,
             user_ids: HashMap::with_capacity(0),
@@ -111,6 +117,7 @@ impl Session {
                     _ = broadcast_timer.tick().fuse() => handler::handle_broadcast_timer(&mut self),
                 }
             }
+            self.sessions.remove(&self.id).await;
         });
     }
 

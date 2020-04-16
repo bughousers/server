@@ -19,10 +19,8 @@ use crate::{
     session::{Msg, Session},
 };
 use futures::channel::mpsc;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-
-const GC_INTERVAL: Duration = Duration::from_secs(900);
 
 #[derive(Clone)]
 pub struct Sessions {
@@ -54,10 +52,18 @@ impl Sessions {
         self.inner.sessions.read().await.get(id).cloned()
     }
 
+    pub async fn remove(&self, id: &SessionId) {
+        self.inner.sessions.write().await.remove(id);
+    }
+
     pub async fn spawn(&self, owner_name: &str) -> Option<mpsc::Sender<Msg>> {
         let session_id = SessionId::new();
-        let (session, tx) =
-            Session::new(self.inner.config.clone(), session_id.clone(), owner_name)?;
+        let (session, tx) = Session::new(
+            self.clone(),
+            self.inner.config.clone(),
+            session_id.clone(),
+            owner_name,
+        )?;
         session.spawn();
         self.inner
             .sessions
@@ -65,24 +71,5 @@ impl Sessions {
             .await
             .insert(session_id, tx.clone());
         Some(tx)
-    }
-
-    pub async fn garbage_collect(&self) {
-        let s = self.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::delay_for(GC_INTERVAL).await;
-                let mut marked: Vec<SessionId> = Vec::with_capacity(0);
-                let sessions = &mut s.inner.sessions.write().await;
-                for (sid, s) in sessions.iter() {
-                    if s.is_closed() {
-                        marked.push(sid.clone());
-                    }
-                }
-                for sid in marked {
-                    sessions.remove(&sid);
-                }
-            }
-        });
     }
 }
