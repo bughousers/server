@@ -13,7 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -21,7 +24,10 @@ pub struct Config {
     bind_addr: SocketAddr,
     max_session: usize,
     session_capacity: usize,
+    tick: Duration,
+    broadcast_interval: Duration,
     max_user: usize,
+    max_participant: usize,
 }
 
 impl Config {
@@ -45,8 +51,20 @@ impl Config {
         self.session_capacity
     }
 
+    pub fn tick(&self) -> Duration {
+        self.tick
+    }
+
+    pub fn broadcast_interval(&self) -> Duration {
+        self.broadcast_interval
+    }
+
     pub fn max_user(&self) -> usize {
         self.max_user
+    }
+
+    pub fn max_participant(&self) -> usize {
+        self.max_participant
     }
 }
 
@@ -57,7 +75,10 @@ impl Default for Config {
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
             max_session: 10,
             session_capacity: 4,
+            tick: Duration::from_secs(2),
+            broadcast_interval: Duration::from_secs(20),
             max_user: 20,
+            max_participant: 5,
         }
     }
 }
@@ -114,10 +135,37 @@ impl Builder {
         }
     }
 
+    pub fn tick(self, value: Duration) -> Self {
+        Self {
+            config: Config {
+                tick: value,
+                ..self.config
+            },
+        }
+    }
+
+    pub fn broadcast_interval(self, value: Duration) -> Self {
+        Self {
+            config: Config {
+                broadcast_interval: value,
+                ..self.config
+            },
+        }
+    }
+
     pub fn max_user(self, value: usize) -> Self {
         Self {
             config: Config {
                 max_user: value,
+                ..self.config
+            },
+        }
+    }
+
+    pub fn max_participant(self, value: usize) -> Self {
+        Self {
+            config: Config {
+                max_participant: value,
                 ..self.config
             },
         }

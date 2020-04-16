@@ -13,12 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::common::*;
-use crate::session::{Msg, Session};
+use crate::{
+    common::*,
+    config::Config,
+    session::{Msg, Session},
+};
 use futures::channel::mpsc;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 
 const GC_INTERVAL: Duration = Duration::from_secs(900);
@@ -30,20 +31,22 @@ pub struct Sessions {
 
 struct Inner {
     sessions: RwLock<HashMap<SessionId, mpsc::Sender<Msg>>>,
+    config: Arc<Config>,
 }
 
 impl Inner {
-    fn new() -> Self {
+    fn new(config: Arc<Config>) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
+            config,
         }
     }
 }
 
 impl Sessions {
-    pub fn new() -> Self {
+    pub fn new(config: Arc<Config>) -> Self {
         Self {
-            inner: Arc::new(Inner::new()),
+            inner: Arc::new(Inner::new(config)),
         }
     }
 
@@ -53,7 +56,8 @@ impl Sessions {
 
     pub async fn spawn(&self, owner_name: &str) -> Option<mpsc::Sender<Msg>> {
         let session_id = SessionId::new();
-        let (session, tx) = Session::new(session_id.clone(), owner_name)?;
+        let (session, tx) =
+            Session::new(self.inner.config.clone(), session_id.clone(), owner_name)?;
         session.spawn();
         self.inner
             .sessions

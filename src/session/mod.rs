@@ -16,28 +16,26 @@
 mod handler;
 mod utils;
 
-use crate::common::event::{Event, EventType};
-use crate::common::*;
+use crate::{
+    common::event::{Event, EventType},
+    common::*,
+    config::Config,
+};
 use bughouse_rs::logic::{ChessLogic, Winner};
-use futures::channel::mpsc;
-use futures::{select, FutureExt, StreamExt};
+use futures::{channel::mpsc, select, FutureExt, StreamExt};
 pub use handler::Msg;
 use serde::Serialize;
-use std::collections::HashMap;
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
-use tokio::sync::broadcast;
-use tokio::time::interval;
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::{sync::broadcast, time::interval};
 
 const BROADCAST_CHANNEL_CAPACITY: usize = 5;
-const BROADCAST_INTERVAL: Duration = Duration::from_secs(20);
 const BROADCAST_MAX_FAILURE: usize = 20;
-const CHANNEL_CAPACITY: usize = 0;
 const GAME_DURATION: Duration = Duration::from_secs(300);
-const MAX_NUM_OF_PARTICIPANTS: usize = 5;
-const MAX_NUM_OF_USERS: usize = std::u8::MAX as usize + 1;
 const PROMOTE_ADDED_TIME: Duration = Duration::from_secs(3);
-const TICK: Duration = Duration::from_secs(2);
 const ZERO_SECS: Duration = Duration::from_secs(0);
 
 type Result<T> = std::result::Result<T, Error>;
@@ -65,14 +63,20 @@ pub struct Session {
     broadcast_tx: broadcast::Sender<String>,
     #[serde(skip_serializing)]
     failed_broadcasts: usize,
+    #[serde(skip_serializing)]
+    config: Arc<Config>,
 }
 
 impl Session {
-    pub fn new(session_id: SessionId, owner_name: &str) -> Option<(Session, mpsc::Sender<Msg>)> {
+    pub fn new(
+        config: Arc<Config>,
+        session_id: SessionId,
+        owner_name: &str,
+    ) -> Option<(Session, mpsc::Sender<Msg>)> {
         if !utils::is_valid_user_name(owner_name) {
             return None;
         }
-        let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let (tx, rx) = mpsc::channel(config.session_capacity());
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CHANNEL_CAPACITY);
         let session = Self {
             id: session_id,
@@ -86,14 +90,15 @@ impl Session {
             game: None,
             broadcast_tx,
             failed_broadcasts: 0,
+            config,
         };
         Some((session, tx))
     }
 
     pub fn spawn(mut self) {
         tokio::spawn(async move {
-            let mut timer = interval(TICK);
-            let mut broadcast_timer = interval(BROADCAST_INTERVAL);
+            let mut timer = interval(self.config.tick());
+            let mut broadcast_timer = interval(self.config.broadcast_interval());
             loop {
                 select! {
                     msg = self.rx.next() => {
@@ -123,7 +128,7 @@ impl Session {
     }
 
     fn add_user(&mut self, name: String) -> Result<(UserId, AuthToken)> {
-        if !utils::is_valid_user_name(&name) || self.user_ids.len() >= MAX_NUM_OF_USERS {
+        if !utils::is_valid_user_name(&name) || self.user_ids.len() >= self.config.max_user() {
             return Err(Error::Error);
         }
         let user_id = UserId::new(self.user_ids.len() as u8);
@@ -180,7 +185,7 @@ impl Session {
 
     fn start_game(&mut self) -> Result<()> {
         if self.participants.len() < 4
-            || self.participants.len() > MAX_NUM_OF_PARTICIPANTS
+            || self.participants.len() > self.config.max_participant()
             || self.did_game_start()
         {
             return Err(Error::Error);

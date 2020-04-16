@@ -19,7 +19,7 @@ use dispatcher::dispatch;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::Server;
 use sessions::Sessions;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 mod common;
 mod config;
@@ -48,8 +48,8 @@ fn parse_args() -> Config {
 
 #[tokio::main]
 async fn main() -> Result<(), hyper::Error> {
-    let config = parse_args();
-    let sessions = Sessions::new();
+    let config = Arc::new(parse_args());
+    let sessions = Sessions::new(config.clone());
     sessions.garbage_collect().await;
     let make_svc = make_service_fn(|_| {
         let sessions = sessions.clone();
