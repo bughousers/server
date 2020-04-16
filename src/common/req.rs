@@ -13,7 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use super::data::{AuthToken, UserId};
+use super::data::AuthToken;
+use crate::data::UserId;
 use serde::{Deserialize, Serialize};
 
 /// `Create` is received when the user wants to create a new session.

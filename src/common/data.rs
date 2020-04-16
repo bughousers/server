@@ -33,19 +33,6 @@ impl<T: Into<String>> From<T> for SessionId {
     }
 }
 
-/// An ID which identifies a user in a session. **Not** globally unique.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UserId(u8);
-
-impl UserId {
-    pub const OWNER: UserId = UserId(0);
-
-    pub fn new(id: u8) -> Self {
-        Self(id)
-    }
-}
-
 /// `AuthToken` lets us verify a request's authenticity. This token should be
 /// kept secret between the user and the server.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

@@ -13,8 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use super::data::UserId;
-use crate::session::{Game, Session};
+use crate::{
+    data::UserId,
+    session::{Game, Session},
+};
 use bughouse_rs::infoCourier::infoCourier::gen_fen;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};

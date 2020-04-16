@@ -17,7 +17,7 @@ use crate::{
     common::event::{Event, EventType},
     common::*,
     config::Config,
-    data::User,
+    data::{User, UserId},
     sessions::Sessions,
 };
 use bughouse_rs::logic::{ChessLogic, Winner};

@@ -13,8 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use super::data::{AuthToken, SessionId, UserId};
-use crate::session::Session;
+use super::data::{AuthToken, SessionId};
+use crate::{data::UserId, session::Session};
 use serde::Serialize;
 
 /// `Created` is sent when a session is successfully created as per user

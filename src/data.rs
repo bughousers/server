@@ -14,13 +14,55 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use rand::{thread_rng, Rng};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
+    convert::TryFrom,
     fmt,
     fmt::{Display, Formatter},
     num::ParseIntError,
     str::FromStr,
 };
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(try_from = "&str")]
+#[serde(into = "String")]
+pub struct UserId(u8);
+
+impl UserId {
+    pub const OWNER: UserId = UserId(0);
+
+    pub fn new(id: u8) -> Self {
+        Self(id)
+    }
+}
+
+impl Display for UserId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("{}", self.0))
+    }
+}
+
+impl FromStr for UserId {
+    type Err = ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(u8::from_str_radix(s, 10)?))
+    }
+}
+
+impl Into<String> for UserId {
+    fn into(self) -> String {
+        self.to_string()
+    }
+}
+
+impl TryFrom<&str> for UserId {
+    type Error = ParseIntError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(into = "String")]

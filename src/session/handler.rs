@@ -14,10 +14,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use super::Session;
-use crate::common::event::EventType;
-use crate::common::req::*;
-use crate::common::resp::*;
-use crate::common::*;
+use crate::{
+    common::{event::EventType, req::*, resp::*, *},
+    data::UserId,
+};
 use tokio::sync::{broadcast, oneshot};
 
 type Result = std::result::Result<(), ()>;
