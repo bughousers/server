@@ -23,14 +23,14 @@ use tokio::sync::{broadcast, oneshot};
 type Result = std::result::Result<(), ()>;
 
 pub enum Msg {
-    C(Create, oneshot::Sender<String>),
+    C(Create, oneshot::Sender<Vec<u8>>),
     D(Delete),
-    J(Join, oneshot::Sender<String>),
+    J(Join, oneshot::Sender<Vec<u8>>),
     S(Start),
     R(Resign),
     B(Board),
     P(Participants),
-    Subscribe(oneshot::Sender<broadcast::Receiver<String>>),
+    Subscribe(oneshot::Sender<broadcast::Receiver<Vec<u8>>>),
 }
 
 pub async fn handle_msg(s: &mut Session, msg: Msg) {
@@ -54,14 +54,14 @@ pub fn handle_broadcast_timer(s: &mut Session) {
     s.notify_all(UserId::OWNER, EventType::Periodic);
 }
 
-async fn handle_create(s: &mut Session, req: Create, tx: oneshot::Sender<String>) -> Result {
+async fn handle_create(s: &mut Session, req: Create, tx: oneshot::Sender<Vec<u8>>) -> Result {
     let res = s.add_user(req.owner_name);
     if res.is_err() {
         s.rx.close();
         return Err(());
     }
     let (user_id, auth_token) = res.or(Err(()))?;
-    let json = serde_json::to_string(&Created {
+    let json = serde_json::to_vec(&Created {
         session_id: &s.id,
         auth_token: &auth_token,
     })
@@ -78,7 +78,7 @@ async fn handle_delete(s: &mut Session, req: Delete) -> Result {
     Ok(())
 }
 
-async fn handle_join(s: &mut Session, req: Join, tx: oneshot::Sender<String>) -> Result {
+async fn handle_join(s: &mut Session, req: Join, tx: oneshot::Sender<Vec<u8>>) -> Result {
     match req {
         Join::Join { user_name } => handle_join2(s, user_name, tx).await,
         Join::Connect { auth_token } => handle_connect(s, auth_token, tx).await,
@@ -126,9 +126,9 @@ async fn handle_participants(s: &mut Session, req: Participants) -> Result {
     Ok(())
 }
 
-async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<String>) -> Result {
+async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<Vec<u8>>) -> Result {
     let (user_id, auth_token) = s.add_user(user_name).or(Err(()))?;
-    let json = serde_json::to_string(&Joined {
+    let json = serde_json::to_vec(&Joined {
         auth_token: &auth_token,
     })
     .unwrap();
@@ -140,10 +140,10 @@ async fn handle_join2(s: &mut Session, user_name: String, tx: oneshot::Sender<St
 async fn handle_connect(
     s: &mut Session,
     auth_token: AuthToken,
-    tx: oneshot::Sender<String>,
+    tx: oneshot::Sender<Vec<u8>>,
 ) -> Result {
     let user_id = s.user_ids.get(&auth_token).ok_or(())?;
-    let json = serde_json::to_string(&Connected {
+    let json = serde_json::to_vec(&Connected {
         user_id,
         session: s,
     })
@@ -192,7 +192,7 @@ async fn handle_promote(
 
 async fn handle_subscribe(
     s: &mut Session,
-    tx: oneshot::Sender<broadcast::Receiver<String>>,
+    tx: oneshot::Sender<broadcast::Receiver<Vec<u8>>>,
 ) -> Result {
     let _ = tx.send(s.broadcast_tx.subscribe());
     Ok(())

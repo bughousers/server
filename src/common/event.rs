@@ -29,9 +29,11 @@ pub struct Event<'a> {
 }
 
 impl<'a> Event<'a> {
-    pub fn to_message(&self) -> String {
-        let msg = serde_json::ser::to_string(self).unwrap();
-        format!("data: {}\n\n", msg)
+    pub fn to_message(&self) -> Vec<u8> {
+        let mut msg = b"data: ".to_vec();
+        msg.append(&mut serde_json::ser::to_vec(self).unwrap());
+        msg.extend(b"\n\n");
+        msg
     }
 }
 

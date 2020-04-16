@@ -67,7 +67,7 @@ pub struct Session {
     game_id: usize,
     game: Option<Game>,
     #[serde(skip_serializing)]
-    broadcast_tx: broadcast::Sender<String>,
+    broadcast_tx: broadcast::Sender<Vec<u8>>,
     #[serde(skip_serializing)]
     failed_broadcasts: usize,
     #[serde(skip_serializing)]
