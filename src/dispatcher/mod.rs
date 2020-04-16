@@ -20,7 +20,6 @@ mod v1;
 use crate::sessions::Sessions;
 use error::Error;
 use hyper::{Body, Response};
-use url::Url;
 use utils::{bad_request, not_found};
 
 type Request = hyper::Request<Body>;
@@ -29,24 +28,16 @@ type Result = StdResult<Response<Body>, Error>;
 type StdResult<T, E> = std::result::Result<T, E>;
 
 pub async fn dispatch(sessions: Sessions, req: Request) -> StdResult<Response<Body>, hyper::Error> {
-    match real_dispatch(sessions, req).await {
+    let path = req.uri().path().to_owned();
+    let parts: Vec<&str> = path.split_terminator('/').skip(1).collect();
+    let res = match parts.split_first() {
+        Some((&"v1", rest)) => v1::dispatch(sessions, rest, req).await,
+        _ => Err(Error::InvalidResource),
+    };
+    match res {
         Ok(resp) => Ok(resp),
         Err(Error::Hyper(err)) => Err(err),
         Err(Error::InvalidRequest) => Ok(bad_request()),
         Err(Error::InvalidResource) => Ok(not_found()),
-    }
-}
-
-async fn real_dispatch(sessions: Sessions, req: Request) -> Result {
-    let uri = req.uri();
-    let scheme = uri.scheme().ok_or(Error::InvalidRequest)?;
-    let authority = uri.authority().ok_or(Error::InvalidRequest)?;
-    let path_and_query = uri.path_and_query().ok_or(Error::InvalidRequest)?;
-    let url = format!("{}://{}{}", scheme, authority, path_and_query);
-    let url = Url::parse(&url)?;
-    let parts: Vec<&str> = url.path_segments().unwrap().collect();
-    match parts.split_first() {
-        Some((&"v1", rest)) => v1::dispatch(sessions, rest, req).await,
-        _ => Err(Error::InvalidResource),
     }
 }

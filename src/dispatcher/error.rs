@@ -42,9 +42,3 @@ impl From<serde_json::Error> for Error {
         Self::InvalidRequest
     }
 }
-
-impl From<url::ParseError> for Error {
-    fn from(_: url::ParseError) -> Self {
-        Self::InvalidRequest
-    }
-}
