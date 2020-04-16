@@ -19,6 +19,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 pub struct Config {
     debug: bool,
     bind_addr: SocketAddr,
+    max_session: usize,
     session_capacity: usize,
     max_user: usize,
 }
@@ -36,6 +37,10 @@ impl Config {
         &self.bind_addr
     }
 
+    pub fn max_session(&self) -> usize {
+        self.max_session
+    }
+
     pub fn session_capacity(&self) -> usize {
         self.session_capacity
     }
@@ -50,6 +55,7 @@ impl Default for Config {
         Self {
             debug: false,
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
+            max_session: 10,
             session_capacity: 4,
             max_user: 20,
         }
@@ -85,6 +91,15 @@ impl Builder {
         Self {
             config: Config {
                 bind_addr: value.into(),
+                ..self.config
+            },
+        }
+    }
+
+    pub fn max_session(self, value: usize) -> Self {
+        Self {
+            config: Config {
+                max_session: value,
                 ..self.config
             },
         }
