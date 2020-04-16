@@ -33,13 +33,7 @@ fn parse_args() -> Config {
     let mut config = Config::builder();
     let args = App::new(crate_name!())
         .version(crate_version!())
-        .arg(
-            Arg::with_name("bind")
-                .long("bind")
-                .short("b")
-                .takes_value(true)
-                .value_name("ADDR"),
-        )
+        .arg(Arg::with_name("debug").long("debug").short("d"))
         .arg(
             Arg::with_name("threads")
                 .long("threads")
@@ -47,19 +41,32 @@ fn parse_args() -> Config {
                 .takes_value(true)
                 .value_name("NUM"),
         )
+        .arg(
+            Arg::with_name("bind")
+                .long("bind")
+                .short("b")
+                .takes_value(true)
+                .value_name("ADDR"),
+        )
         .get_matches();
-    if let Some(addr) = args.value_of("bind") {
-        config = config.bind_addr::<SocketAddr>(addr.parse().unwrap());
+    if args.is_present("debug") {
+        config = config.debug(true);
     }
     if let Some(num) = args.value_of("threads") {
         let num: usize = num.parse().unwrap();
         config = config.threads(num);
+    }
+    if let Some(addr) = args.value_of("bind") {
+        config = config.bind_addr::<SocketAddr>(addr.parse().unwrap());
     }
     config.build()
 }
 
 fn main() {
     let config = Arc::new(parse_args());
+    if config.debug() {
+        println!("Current configuration: {:?}", config);
+    }
     let mut rt = runtime::Builder::new()
         .core_threads(config.threads())
         .enable_all()
