@@ -20,6 +20,7 @@ pub struct Config {
     debug: bool,
     bind_addr: SocketAddr,
     session_capacity: usize,
+    max_user: usize,
 }
 
 impl Config {
@@ -38,6 +39,10 @@ impl Config {
     pub fn session_capacity(&self) -> usize {
         self.session_capacity
     }
+
+    pub fn max_user(&self) -> usize {
+        self.max_user
+    }
 }
 
 impl Default for Config {
@@ -46,6 +51,7 @@ impl Default for Config {
             debug: false,
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
             session_capacity: 4,
+            max_user: 20,
         }
     }
 }
@@ -88,6 +94,15 @@ impl Builder {
         Self {
             config: Config {
                 session_capacity: value,
+                ..self.config
+            },
+        }
+    }
+
+    pub fn max_user(self, value: usize) -> Self {
+        Self {
+            config: Config {
+                max_user: value,
                 ..self.config
             },
         }
