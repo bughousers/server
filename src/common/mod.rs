@@ -20,4 +20,4 @@ pub mod req;
 pub mod resp;
 mod utils;
 
-pub use data::{AuthToken, SessionId, User, UserId, UserStatus};
+pub use data::{AuthToken, SessionId, UserId};
