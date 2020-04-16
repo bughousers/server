@@ -25,14 +25,14 @@ const GC_INTERVAL: Duration = Duration::from_secs(900);
 
 #[derive(Clone)]
 pub struct Sessions {
-    inner: Arc<SessionsInner>,
+    inner: Arc<Inner>,
 }
 
-struct SessionsInner {
+struct Inner {
     sessions: RwLock<HashMap<SessionId, mpsc::Sender<Msg>>>,
 }
 
-impl SessionsInner {
+impl Inner {
     fn new() -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
@@ -43,7 +43,7 @@ impl SessionsInner {
 impl Sessions {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(SessionsInner::new()),
+            inner: Arc::new(Inner::new()),
         }
     }
 
