@@ -21,6 +21,7 @@ use std::{
 #[derive(Clone, Debug)]
 pub struct Config {
     debug: bool,
+    threads: usize,
     bind_addr: SocketAddr,
     max_session: usize,
     session_capacity: usize,
@@ -37,6 +38,10 @@ impl Config {
 
     pub fn debug(&self) -> bool {
         self.debug
+    }
+
+    pub fn threads(&self) -> usize {
+        self.threads
     }
 
     pub fn bind_addr(&self) -> &SocketAddr {
@@ -72,6 +77,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             debug: false,
+            threads: 2,
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
             max_session: 10,
             session_capacity: 4,
@@ -103,6 +109,15 @@ impl Builder {
         Self {
             config: Config {
                 debug: value,
+                ..self.config
+            },
+        }
+    }
+
+    pub fn threads(self, value: usize) -> Self {
+        Self {
+            config: Config {
+                threads: value,
                 ..self.config
             },
         }

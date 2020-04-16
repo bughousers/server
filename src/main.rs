@@ -20,6 +20,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::Server;
 use sessions::Sessions;
 use std::{net::SocketAddr, sync::Arc};
+use tokio::runtime;
 
 mod common;
 mod config;
@@ -39,20 +40,35 @@ fn parse_args() -> Config {
                 .takes_value(true)
                 .value_name("ADDR"),
         )
+        .arg(
+            Arg::with_name("threads")
+                .long("threads")
+                .short("t")
+                .takes_value(true)
+                .value_name("NUM"),
+        )
         .get_matches();
     if let Some(addr) = args.value_of("bind") {
         config = config.bind_addr::<SocketAddr>(addr.parse().unwrap());
     }
+    if let Some(num) = args.value_of("threads") {
+        let num: usize = num.parse().unwrap();
+        config = config.threads(num);
+    }
     config.build()
 }
 
-#[tokio::main]
-async fn main() -> Result<(), hyper::Error> {
+fn main() {
     let config = Arc::new(parse_args());
+    let mut rt = runtime::Builder::new()
+        .core_threads(config.threads())
+        .enable_all()
+        .build()
+        .unwrap();
     let sessions = Sessions::new(config.clone());
     let make_svc = make_service_fn(|_| {
         let sessions = sessions.clone();
         async { Ok::<_, hyper::Error>(service_fn(move |req| dispatch(sessions.clone(), req))) }
     });
-    Server::bind(config.bind_addr()).serve(make_svc).await
+    let _ = rt.block_on(async { Server::bind(config.bind_addr()).serve(make_svc).await });
 }
