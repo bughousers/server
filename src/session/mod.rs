@@ -64,8 +64,7 @@ pub struct Session {
     participants: Vec<UserId>,
     #[serde(skip_serializing)]
     queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
-    game_id: usize,
-    game: Option<Game>,
+    game: GameState,
     #[serde(skip_serializing)]
     broadcast_tx: broadcast::Sender<Vec<u8>>,
     #[serde(skip_serializing)]
@@ -94,8 +93,7 @@ impl Session {
             users: HashMap::with_capacity(0),
             participants: Vec::with_capacity(0),
             queue: VecDeque::with_capacity(0),
-            game_id: 0,
-            game: None,
+            game: GameState::Starting,
             broadcast_tx,
             failed_broadcasts: 0,
             config,
@@ -149,7 +147,7 @@ impl Session {
     }
 
     fn set_participants(&mut self, participants: Vec<UserId>) -> Result<()> {
-        if self.did_tournament_start() || participants.iter().any(|p| self.users.get(p).is_none()) {
+        if !self.game.is_starting() || participants.iter().any(|p| self.users.get(p).is_none()) {
             return Err(Error::Error);
         }
         self.participants = participants;
@@ -159,7 +157,7 @@ impl Session {
     fn fill_queue(&mut self) -> Result<()> {
         if self.queue.len() > 0 {
             return Ok(());
-        } else if self.did_tournament_start() {
+        } else if !self.game.is_starting() {
             return Err(Error::Error);
         }
         let pairings = utils::create_pairings(self.participants.len() as u8);
@@ -181,30 +179,23 @@ impl Session {
         Ok(())
     }
 
-    fn did_tournament_start(&self) -> bool {
-        self.game_id != 0
-    }
-
-    fn did_game_start(&self) -> bool {
-        self.game.is_some()
-    }
-
     fn start_game(&mut self) -> Result<()> {
         if self.participants.len() < 4
             || self.participants.len() > self.config.max_participant()
-            || self.did_game_start()
+            || self.game.did_start()
         {
             return Err(Error::Error);
         }
         self.fill_queue()?;
         let active_participants = self.queue.pop_front().ok_or(Error::Error)?;
-        self.game_id += 1;
-        self.game = Some(Game::new(active_participants));
+        let id = self.game.id() + 1;
+        let game = Game::new(active_participants);
+        self.game = GameState::Started { id, game };
         Ok(())
     }
 
     fn tick(&mut self) {
-        self.game.as_mut().map(|g| {
+        self.game.map(|g| {
             g.update_remaining_time(true);
             g.refresh_clock(true);
             g.update_remaining_time(false);
@@ -214,13 +205,13 @@ impl Session {
     }
 
     fn check_end_conditions(&mut self) {
-        if let Some(g) = self.game.as_ref() {
+        if let Some(g) = self.game.get() {
             let ((u1, u2), (u3, u4)) = g.active_participants;
             match g.winner() {
                 Winner::W1 | Winner::B2 => {
                     self.users.get_mut(&u1).map(|u| *(u.score_mut()) += 1);
                     self.users.get_mut(&u2).map(|u| *(u.score_mut()) += 1);
-                    self.game = None;
+                    self.game = GameState::Ended { id: self.game.id() };
                     self.notify_all(
                         u1,
                         EventType::GameEnded {
@@ -231,7 +222,7 @@ impl Session {
                 Winner::B1 | Winner::W2 => {
                     self.users.get_mut(&u3).map(|u| *(u.score_mut()) += 1);
                     self.users.get_mut(&u4).map(|u| *(u.score_mut()) += 1);
-                    self.game = None;
+                    self.game = GameState::Ended { id: self.game.id() };
                     self.notify_all(
                         u3,
                         EventType::GameEnded {
@@ -240,7 +231,7 @@ impl Session {
                     );
                 }
                 Winner::P => {
-                    self.game = None;
+                    self.game = GameState::Ended { id: self.game.id() };
                     self.notify_all(UserId::OWNER, EventType::GameEnded { winners: None });
                 }
                 _ => (),
@@ -260,6 +251,74 @@ impl Session {
         }
         if self.failed_broadcasts > BROADCAST_MAX_FAILURE {
             self.rx.close();
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "state", content = "data")]
+#[serde(rename_all = "camelCase")]
+pub enum GameState {
+    Starting,
+    #[serde(rename_all = "camelCase")]
+    Started {
+        id: usize,
+        game: Game,
+    },
+    #[serde(rename_all = "camelCase")]
+    Ended {
+        id: usize,
+    },
+}
+
+impl GameState {
+    fn is_starting(&self) -> bool {
+        match self {
+            Self::Starting => true,
+            _ => false,
+        }
+    }
+
+    fn did_start(&self) -> bool {
+        match self {
+            Self::Started { id, game } => true,
+            _ => false,
+        }
+    }
+
+    fn did_end(&self) -> bool {
+        match self {
+            Self::Ended { id } => true,
+            _ => false,
+        }
+    }
+
+    fn get(&self) -> Option<&Game> {
+        match self {
+            Self::Started { id, game } => Some(game),
+            _ => None,
+        }
+    }
+
+    fn id(&self) -> usize {
+        match self {
+            Self::Starting => 0,
+            Self::Started { id, game } => *id,
+            Self::Ended { id } => *id,
+        }
+    }
+
+    fn get_mut(&mut self) -> Option<&mut Game> {
+        match self {
+            Self::Started { id, game } => Some(game),
+            _ => None,
+        }
+    }
+
+    fn map<F: FnOnce(&mut Game) -> R, R>(&mut self, f: F) -> Option<R> {
+        match self {
+            Self::Started { id, game } => Some(f(game)),
+            _ => None,
         }
     }
 }

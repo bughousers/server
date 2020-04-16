@@ -96,7 +96,7 @@ async fn handle_start(s: &mut Session, req: Start) -> Result {
 
 async fn handle_resign(s: &mut Session, req: Resign) -> Result {
     let user_id = s.user_id(&req.auth_token).ok_or(())?;
-    s.game.as_mut().map(|g| g.resign(&user_id));
+    s.game.map(|g| g.resign(&user_id));
     s.check_end_conditions();
     Ok(())
 }
@@ -159,7 +159,7 @@ async fn handle_deploy(
     pos: String,
 ) -> Result {
     let user_id = s.user_id(&auth_token).ok_or(())?;
-    let game = s.game.as_mut().ok_or(())?;
+    let game = s.game.get_mut().ok_or(())?;
     game.deploy_piece(&user_id, &piece, &pos).or(Err(()))?;
     s.check_end_conditions();
     s.notify_all(user_id, EventType::PieceDeployed);
@@ -168,7 +168,7 @@ async fn handle_deploy(
 
 async fn handle_move(s: &mut Session, auth_token: AuthToken, change: String) -> Result {
     let user_id = s.user_id(&auth_token).ok_or(())?;
-    let game = s.game.as_mut().ok_or(())?;
+    let game = s.game.get_mut().ok_or(())?;
     game.move_piece(&user_id, &change).or(Err(()))?;
     s.check_end_conditions();
     s.notify_all(user_id, EventType::PieceMoved);
@@ -182,7 +182,7 @@ async fn handle_promote(
     upgrade_to: String,
 ) -> Result {
     let user_id = s.user_id(&auth_token).ok_or(())?;
-    let game = s.game.as_mut().ok_or(())?;
+    let game = s.game.get_mut().ok_or(())?;
     game.promote_piece(&user_id, &change, &upgrade_to)
         .or(Err(()))?;
     s.check_end_conditions();
