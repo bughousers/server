@@ -29,6 +29,14 @@ mod dispatcher;
 mod session;
 mod sessions;
 
+macro_rules! debug {
+    ($config:expr, $fmt:expr, $($arg:tt)*) => {
+        if ($config.debug()) {
+            println!($fmt, $($arg)*);
+        }
+    };
+}
+
 fn parse_args() -> Config {
     let mut builder = Config::builder();
     let args = App::new(crate_name!())
@@ -63,9 +71,7 @@ fn parse_args() -> Config {
 
 fn main() {
     let config = Arc::new(parse_args());
-    if config.debug() {
-        println!("Current configuration: {:?}", config);
-    }
+    debug!(config, "Current configuration: {:?}", config);
     let mut rt = runtime::Builder::new();
     if config.threads() > 1 {
         rt.threaded_scheduler().core_threads(config.threads());
@@ -73,9 +79,7 @@ fn main() {
         rt.basic_scheduler();
     }
     let mut rt = rt.enable_all().build().unwrap();
-    if config.debug() {
-        println!("Using Tokio runtime: {:?}", rt);
-    }
+    debug!(config, "Using Tokio runtime: {:?}", rt);
     let sessions = Sessions::new(config.clone());
     let make_svc = make_service_fn(|_| {
         let sessions = sessions.clone();
