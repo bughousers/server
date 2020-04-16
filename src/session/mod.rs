@@ -13,13 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-mod handler;
-mod utils;
-
 use crate::{
     common::event::{Event, EventType},
     common::*,
     config::Config,
+    data::User,
     sessions::Sessions,
 };
 use bughouse_rs::logic::{ChessLogic, Winner};
@@ -35,6 +33,9 @@ use tokio::{
     sync::{broadcast, mpsc},
     time::interval,
 };
+
+mod handler;
+mod utils;
 
 const BROADCAST_CHANNEL_CAPACITY: usize = 5;
 const BROADCAST_MAX_FAILURE: usize = 20;
@@ -59,9 +60,8 @@ pub struct Session {
     rx: mpsc::Receiver<Msg>,
     #[serde(skip_serializing)]
     user_ids: HashMap<AuthToken, UserId>,
-    user_names: HashMap<UserId, String>,
+    users: HashMap<UserId, User>,
     participants: Vec<UserId>,
-    score: HashMap<UserId, usize>,
     #[serde(skip_serializing)]
     queue: VecDeque<((UserId, UserId), (UserId, UserId))>,
     game_id: usize,
@@ -91,9 +91,8 @@ impl Session {
             id: session_id,
             rx,
             user_ids: HashMap::with_capacity(0),
-            user_names: HashMap::with_capacity(0),
+            users: HashMap::with_capacity(0),
             participants: Vec::with_capacity(0),
-            score: HashMap::with_capacity(0),
             queue: VecDeque::with_capacity(0),
             game_id: 0,
             game: None,
@@ -143,17 +142,14 @@ impl Session {
         }
         let user_id = UserId::new(self.user_ids.len() as u8);
         let auth_token = AuthToken::new();
+        let user = User::new(name).ok_or(Error::Error)?;
         self.user_ids.insert(auth_token.clone(), user_id);
-        self.user_names.insert(user_id, name);
+        self.users.insert(user_id, user);
         Ok((user_id, auth_token))
     }
 
     fn set_participants(&mut self, participants: Vec<UserId>) -> Result<()> {
-        if self.did_tournament_start()
-            || participants
-                .iter()
-                .any(|p| self.user_names.get(p).is_none())
-        {
+        if self.did_tournament_start() || participants.iter().any(|p| self.users.get(p).is_none()) {
             return Err(Error::Error);
         }
         self.participants = participants;
@@ -222,10 +218,8 @@ impl Session {
             let ((u1, u2), (u3, u4)) = g.active_participants;
             match g.winner() {
                 Winner::W1 | Winner::B2 => {
-                    self.score
-                        .insert(u1, *self.score.get(&u1).unwrap_or(&0) + 1);
-                    self.score
-                        .insert(u2, *self.score.get(&u2).unwrap_or(&0) + 1);
+                    self.users.get_mut(&u1).map(|u| *(u.score_mut()) += 1);
+                    self.users.get_mut(&u2).map(|u| *(u.score_mut()) += 1);
                     self.game = None;
                     self.notify_all(
                         u1,
@@ -235,10 +229,8 @@ impl Session {
                     );
                 }
                 Winner::B1 | Winner::W2 => {
-                    self.score
-                        .insert(u3, *self.score.get(&u3).unwrap_or(&0) + 1);
-                    self.score
-                        .insert(u4, *self.score.get(&u4).unwrap_or(&0) + 1);
+                    self.users.get_mut(&u3).map(|u| *(u.score_mut()) += 1);
+                    self.users.get_mut(&u4).map(|u| *(u.score_mut()) += 1);
                     self.game = None;
                     self.notify_all(
                         u3,
