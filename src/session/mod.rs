@@ -23,7 +23,6 @@ use crate::{
     sessions::Sessions,
 };
 use bughouse_rs::logic::{ChessLogic, Winner};
-use futures::{channel::mpsc, select, FutureExt, StreamExt};
 pub use handler::Msg;
 use serde::Serialize;
 use std::{
@@ -31,7 +30,11 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::broadcast, time::interval};
+use tokio::{
+    select,
+    sync::{broadcast, mpsc},
+    time::interval,
+};
 
 const BROADCAST_CHANNEL_CAPACITY: usize = 5;
 const BROADCAST_MAX_FAILURE: usize = 20;
@@ -107,14 +110,14 @@ impl Session {
             let mut broadcast_timer = interval(self.config.broadcast_interval());
             loop {
                 select! {
-                    msg = self.rx.next() => {
+                    msg = self.rx.recv() => {
                         match msg {
                             Some(msg) => handler::handle_msg(&mut self, msg).await,
                             _ => break
                         }
                     },
-                    _ = timer.tick().fuse() => handler::handle_timer(&mut self),
-                    _ = broadcast_timer.tick().fuse() => handler::handle_broadcast_timer(&mut self),
+                    _ = timer.tick() => handler::handle_timer(&mut self),
+                    _ = broadcast_timer.tick() => handler::handle_broadcast_timer(&mut self),
                 }
             }
             self.sessions.remove(&self.id).await;

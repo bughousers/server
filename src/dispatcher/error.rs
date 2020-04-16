@@ -19,14 +19,14 @@ pub enum Error {
     InvalidResource,
 }
 
-impl From<futures::channel::mpsc::SendError> for Error {
-    fn from(_: futures::channel::mpsc::SendError) -> Self {
+impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
+    fn from(_: tokio::sync::mpsc::error::SendError<T>) -> Self {
         Self::InvalidResource
     }
 }
 
-impl From<futures::channel::oneshot::Canceled> for Error {
-    fn from(_: futures::channel::oneshot::Canceled) -> Self {
+impl From<tokio::sync::oneshot::error::RecvError> for Error {
+    fn from(_: tokio::sync::oneshot::error::RecvError) -> Self {
         Self::InvalidRequest
     }
 }

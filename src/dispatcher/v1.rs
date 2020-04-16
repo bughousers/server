@@ -15,11 +15,8 @@
 
 use super::{error::Error, utils::*, Request, Result};
 use crate::{common::*, session::Msg, sessions::Sessions};
-use futures::{
-    channel::{mpsc, oneshot},
-    SinkExt,
-};
 use hyper::{body, Body, Method};
+use tokio::sync::{mpsc, oneshot};
 
 pub async fn dispatch(sessions: Sessions, parts: &[&str], req: Request) -> Result {
     match parts.split_first() {

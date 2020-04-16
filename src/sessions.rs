@@ -18,9 +18,8 @@ use crate::{
     config::Config,
     session::{Msg, Session},
 };
-use futures::channel::mpsc;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 
 #[derive(Clone)]
 pub struct Sessions {

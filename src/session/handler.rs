@@ -18,8 +18,7 @@ use crate::common::event::EventType;
 use crate::common::req::*;
 use crate::common::resp::*;
 use crate::common::*;
-use futures::channel::oneshot;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 
 type Result = std::result::Result<(), ()>;
 
