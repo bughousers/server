@@ -19,6 +19,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 pub struct Config {
     debug: bool,
     bind_addr: SocketAddr,
+    session_capacity: usize,
 }
 
 impl Config {
@@ -33,6 +34,10 @@ impl Config {
     pub fn bind_addr(&self) -> &SocketAddr {
         &self.bind_addr
     }
+
+    pub fn session_capacity(&self) -> usize {
+        self.session_capacity
+    }
 }
 
 impl Default for Config {
@@ -40,6 +45,7 @@ impl Default for Config {
         Self {
             debug: false,
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
+            session_capacity: 4,
         }
     }
 }
@@ -60,19 +66,28 @@ impl Builder {
         self.config
     }
 
-    pub fn debug(self, debug: bool) -> Self {
+    pub fn debug(self, value: bool) -> Self {
         Self {
             config: Config {
-                debug,
+                debug: value,
                 ..self.config
             },
         }
     }
 
-    pub fn bind_addr<T: Into<SocketAddr>>(self, t: T) -> Self {
+    pub fn bind_addr<T: Into<SocketAddr>>(self, value: T) -> Self {
         Self {
             config: Config {
-                bind_addr: t.into(),
+                bind_addr: value.into(),
+                ..self.config
+            },
+        }
+    }
+
+    pub fn session_capacity(self, value: usize) -> Self {
+        Self {
+            config: Config {
+                session_capacity: value,
                 ..self.config
             },
         }
