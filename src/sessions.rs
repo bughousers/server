@@ -25,17 +25,17 @@ const GC_INTERVAL: Duration = Duration::from_secs(900);
 
 #[derive(Clone)]
 pub struct Sessions {
-    inner: Arc<RwLock<SessionsInner>>,
+    inner: Arc<SessionsInner>,
 }
 
 struct SessionsInner {
-    sessions: HashMap<SessionId, mpsc::Sender<Msg>>,
+    sessions: RwLock<HashMap<SessionId, mpsc::Sender<Msg>>>,
 }
 
 impl SessionsInner {
     fn new() -> Self {
         Self {
-            sessions: HashMap::new(),
+            sessions: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -43,12 +43,12 @@ impl SessionsInner {
 impl Sessions {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(SessionsInner::new())),
+            inner: Arc::new(SessionsInner::new()),
         }
     }
 
     pub async fn get(&self, id: &SessionId) -> Option<mpsc::Sender<Msg>> {
-        self.inner.read().await.sessions.get(id).cloned()
+        self.inner.sessions.read().await.get(id).cloned()
     }
 
     pub async fn spawn(&self, owner_name: &str) -> Option<mpsc::Sender<Msg>> {
@@ -56,9 +56,9 @@ impl Sessions {
         let (session, tx) = Session::new(session_id.clone(), owner_name)?;
         session.spawn();
         self.inner
+            .sessions
             .write()
             .await
-            .sessions
             .insert(session_id, tx.clone());
         Some(tx)
     }
@@ -69,7 +69,7 @@ impl Sessions {
             loop {
                 tokio::time::delay_for(GC_INTERVAL).await;
                 let mut marked: Vec<SessionId> = Vec::with_capacity(0);
-                let sessions = &mut s.inner.write().await.sessions;
+                let sessions = &mut s.inner.sessions.write().await;
                 for (sid, s) in sessions.iter() {
                     if s.is_closed() {
                         marked.push(sid.clone());
