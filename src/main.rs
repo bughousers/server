@@ -30,7 +30,7 @@ mod session;
 mod sessions;
 
 fn parse_args() -> Config {
-    let mut config = Config::builder();
+    let mut builder = Config::builder();
     let args = App::new(crate_name!())
         .version(crate_version!())
         .arg(Arg::with_name("debug").long("debug").short("d"))
@@ -50,16 +50,15 @@ fn parse_args() -> Config {
         )
         .get_matches();
     if args.is_present("debug") {
-        config = config.debug(true);
+        builder.debug(true);
     }
     if let Some(num) = args.value_of("threads") {
-        let num: usize = num.parse().unwrap();
-        config = config.threads(num);
+        builder.threads(num.parse::<usize>().unwrap());
     }
     if let Some(addr) = args.value_of("bind") {
-        config = config.bind_addr::<SocketAddr>(addr.parse().unwrap());
+        builder.bind_addr(addr.parse::<SocketAddr>().unwrap());
     }
-    config.build()
+    builder.build()
 }
 
 fn main() {

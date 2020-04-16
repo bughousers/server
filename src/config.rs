@@ -105,84 +105,48 @@ impl Builder {
         self.config
     }
 
-    pub fn debug(self, value: bool) -> Self {
-        Self {
-            config: Config {
-                debug: value,
-                ..self.config
-            },
-        }
+    pub fn debug(&mut self, value: bool) -> &mut Self {
+        self.config.debug = value;
+        self
     }
 
-    pub fn threads(self, value: usize) -> Self {
-        Self {
-            config: Config {
-                threads: value,
-                ..self.config
-            },
-        }
+    pub fn threads(&mut self, value: usize) -> &mut Self {
+        self.config.threads = value;
+        self
     }
 
-    pub fn bind_addr<T: Into<SocketAddr>>(self, value: T) -> Self {
-        Self {
-            config: Config {
-                bind_addr: value.into(),
-                ..self.config
-            },
-        }
+    pub fn bind_addr<T: Into<SocketAddr>>(&mut self, value: T) -> &mut Self {
+        self.config.bind_addr = value.into();
+        self
     }
 
-    pub fn max_session(self, value: usize) -> Self {
-        Self {
-            config: Config {
-                max_session: value,
-                ..self.config
-            },
-        }
+    pub fn max_session(&mut self, value: usize) -> &mut Self {
+        self.config.max_session = value;
+        self
     }
 
-    pub fn session_capacity(self, value: usize) -> Self {
-        Self {
-            config: Config {
-                session_capacity: value,
-                ..self.config
-            },
-        }
+    pub fn session_capacity(&mut self, value: usize) -> &mut Self {
+        self.config.session_capacity = value;
+        self
     }
 
-    pub fn tick(self, value: Duration) -> Self {
-        Self {
-            config: Config {
-                tick: value,
-                ..self.config
-            },
-        }
+    pub fn tick(&mut self, value: Duration) -> &mut Self {
+        self.config.tick = value;
+        self
     }
 
-    pub fn broadcast_interval(self, value: Duration) -> Self {
-        Self {
-            config: Config {
-                broadcast_interval: value,
-                ..self.config
-            },
-        }
+    pub fn broadcast_interval(&mut self, value: Duration) -> &mut Self {
+        self.config.broadcast_interval = value;
+        self
     }
 
-    pub fn max_user(self, value: usize) -> Self {
-        Self {
-            config: Config {
-                max_user: value,
-                ..self.config
-            },
-        }
+    pub fn max_user(&mut self, value: usize) -> &mut Self {
+        self.config.max_user = value;
+        self
     }
 
-    pub fn max_participant(self, value: usize) -> Self {
-        Self {
-            config: Config {
-                max_participant: value,
-                ..self.config
-            },
-        }
+    pub fn max_participant(&mut self, value: usize) -> &mut Self {
+        self.config.max_participant = value;
+        self
     }
 }
