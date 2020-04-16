@@ -67,11 +67,16 @@ fn main() {
     if config.debug() {
         println!("Current configuration: {:?}", config);
     }
-    let mut rt = runtime::Builder::new()
-        .core_threads(config.threads())
-        .enable_all()
-        .build()
-        .unwrap();
+    let mut rt = runtime::Builder::new();
+    if config.threads() > 1 {
+        rt.threaded_scheduler().core_threads(config.threads());
+    } else {
+        rt.basic_scheduler();
+    }
+    let mut rt = rt.enable_all().build().unwrap();
+    if config.debug() {
+        println!("Using Tokio runtime: {:?}", rt);
+    }
     let sessions = Sessions::new(config.clone());
     let make_svc = make_service_fn(|_| {
         let sessions = sessions.clone();
