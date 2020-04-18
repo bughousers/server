@@ -256,7 +256,7 @@ impl Session {
 }
 
 #[derive(Serialize)]
-#[serde(tag = "state", content = "data")]
+#[serde(tag = "state")]
 #[serde(rename_all = "camelCase")]
 pub enum GameState {
     Starting,
